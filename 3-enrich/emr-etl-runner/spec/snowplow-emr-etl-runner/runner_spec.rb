@@ -16,7 +16,6 @@
 require 'spec_helper'
 
 Runner = Snowplow::EmrEtlRunner::Runner
-Cli = Snowplow::EmrEtlRunner::Cli
 
 describe Runner do
 
@@ -29,7 +28,6 @@ describe Runner do
 
   def get_mock_config
     options = {
-      :skip => [],
       :debug => false,
       :config_file => resource("sparse_config.yml"),
       :enrichments_directory => nil,
@@ -41,7 +39,8 @@ describe Runner do
       :process_shred_location => nil
     }
 
-    args, config, enrichments, resolver = Cli.process_options(options, nil)
+    args, config, enrichments, resolver =
+      Snowplow::EmrEtlRunner::Cli.process_options(options, nil, 'cmd')
 
     [args,config,enrichments,resolver]
   end

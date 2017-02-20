@@ -25,7 +25,7 @@ module Snowplow
     class ConfigError < Error
     end
 
-    # Problem when running Amazon EMR (e.g. job failed) 
+    # Problem when running Amazon EMR (e.g. job failed)
     class EmrExecutionError < Error
     end
 
@@ -40,6 +40,13 @@ module Snowplow
     # Raised if there is no data to process
     # Not strictly an error, but used for control flow
     class NoDataToProcessError < Error
+    end
+
+    # Raised if the linter encountered an issue
+    class LinterError < Error
+      def initialize(message)
+        super(message)
+      end
     end
   end
 end

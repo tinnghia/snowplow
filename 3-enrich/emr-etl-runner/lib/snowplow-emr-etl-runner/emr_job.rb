@@ -15,7 +15,6 @@
 
 require 'set'
 require 'elasticity'
-require 'sluice'
 require 'awrence'
 require 'json'
 require 'base64'
@@ -94,10 +93,6 @@ module Snowplow
         @run_id = run_id
         etl_tstamp = (run_tstamp.to_f * 1000).to_i.to_s
         output_codec = output_codec_from_compression_format(config[:enrich][:output_compression])
-        s3 = Sluice::Storage::S3::new_fog_s3_from(
-          config[:aws][:s3][:region],
-          config[:aws][:access_key_id],
-          config[:aws][:secret_access_key])
 
         # Configure Elasticity with your AWS credentials
         Elasticity.configure do |c|
@@ -149,7 +144,19 @@ module Snowplow
           # Sanity check before staging: processing should be empty
           @jobflow.add_step(get_check_dir_empty_step(csbr[:processing], standard_assets_bucket))
 
-          # TODO: Staging step
+          src_pattern = config[:collectors][:format] == 'clj-tomcat' ? '.*localhost\_access\_log.*\.txt.*' : '.+'
+          csbr[:in].map { |l|
+            staging_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
+            staging_step.arguments = [
+              "--src", l,
+              "--dest", csbr[:processing],
+              "--s3Endpoint", s3_endpoint,
+              "--srcPattern", src_pattern,
+              "--deleteOnSuccess"
+            ]
+            staging_step.name << ": Staging of #{l}"
+            @jobflow.add_step(staging_step)
+          }
 
           # Sanity check steps after staging:
           # - processing shoulnd't be empty
@@ -280,7 +287,7 @@ module Snowplow
           if to_hdfs
 
             # for ndjson/urbanairship we can group by everything, just aim for the target size
-            group_by = is_ua_ndjson(collector_format) ? ".*(urbanairship).*" : ".*\\.([0-9]+-[0-9]+-[0-9]+)-[0-9]+\\..*"
+            group_by = is_ua_ndjson(collector_format) ? ".*\/(\w+)\/.*" : ".*([0-9]+-[0-9]+-[0-9]+)-[0-9]+.*"
 
             # Create the Hadoop MR step for the file crushing
             compact_to_hdfs_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
@@ -312,7 +319,7 @@ module Snowplow
             "Enrich Raw Events",
             assets[:enrich],
             "enrich.hadoop.EtlJob",
-            { :in     => enrich_step_input,
+            { :in     => glob_path(enrich_step_input),
               :good   => enrich_step_output,
               :bad    => partition_by_run(csbe[:bad],    run_id),
               :errors => partition_by_run(csbe[:errors], run_id, config[:enrich][:continue_on_unexpected_error])

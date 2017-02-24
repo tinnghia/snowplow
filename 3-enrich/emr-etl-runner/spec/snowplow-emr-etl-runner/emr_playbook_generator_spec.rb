@@ -80,6 +80,14 @@ describe EmrPlaybookGenerator do
         },
         {
           "type" => "CUSTOM_JAR",
+          "name" => "S3DistCp: staging of ri",
+          "actionOnFailure" => "CANCEL_AND_WAIT",
+          "jar" => "/usr/share/aws/emr/s3-dist-cp/lib/s3-dist-cp.jar",
+          "arguments" => [ "--src", "ri", "--dest", "rp",
+            "--s3Endpoint", "s3-eu-west-1.amazonaws.com", "--srcPattern", ".+", "--deleteOnSuccess" ]
+        },
+        {
+          "type" => "CUSTOM_JAR",
           "name" => "Checking that there is data to process in rp",
           "actionOnFailure" => "CANCEL_AND_WAIT",
           "jar" => "s3://eu-west-1.elasticmapreduce/libs/script-runner/script-runner.jar",
@@ -118,7 +126,7 @@ describe EmrPlaybookGenerator do
           "--hdfs", "--input_format", "cloudfront", "--etl_tstamp", be_a(String),
           "--iglu_config", "", "--enrichments",
           "eyJzY2hlbWEiOiJpZ2x1OmNvbS5zbm93cGxvd2FuYWx5dGljcy5zbm93cGxvdy9lbnJpY2htZW50cy9qc29uc2NoZW1hLzEtMC0wIiwiZGF0YSI6W119",
-          "--input_folder", "rp", "--output_folder", be_a(String), "--bad_rows_folder", be_a(String)
+          "--input_folder", "rp/*", "--output_folder", be_a(String), "--bad_rows_folder", be_a(String)
         ]
       })
     end
@@ -187,6 +195,14 @@ describe EmrPlaybookGenerator do
         },
         {
           "type" => "CUSTOM_JAR",
+          "name" => "S3DistCp: staging of i",
+          "actionOnFailure" => "CANCEL_AND_WAIT",
+          "jar" => "/usr/share/aws/emr/s3-dist-cp/lib/s3-dist-cp.jar",
+          "arguments" => [ "--src", "i", "--dest", "p", "--s3Endpoint", "s3", "--srcPattern", ".+",
+            "--deleteOnSuccess" ]
+        },
+        {
+          "type" => "CUSTOM_JAR",
           "name" => "Checking that there is data to process in p",
           "actionOnFailure" => "CANCEL_AND_WAIT",
           "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
@@ -204,6 +220,14 @@ describe EmrPlaybookGenerator do
           "actionOnFailure" => "CANCEL_AND_WAIT",
           "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
           "arguments" => [ "b/common/emr/snowplow-check-dir-empty.sh", "p" ]
+        },
+        {
+          "type" => "CUSTOM_JAR",
+          "name" => "S3DistCp: staging of i",
+          "actionOnFailure" => "CANCEL_AND_WAIT",
+          "jar" => "/usr/share/aws/emr/s3-dist-cp/lib/s3-dist-cp.jar",
+          "arguments" => [ "--src", "i", "--dest", "p", "--s3Endpoint", "s3", "--srcPattern", ".+",
+            "--deleteOnSuccess" ]
         },
         {
           "type" => "CUSTOM_JAR",
@@ -332,30 +356,30 @@ describe EmrPlaybookGenerator do
 
   describe '#get_enrich_steps' do
     it 'should build only the enrich step is s3distcp is false' do
-      expect(subject.send(:get_enrich_steps, c, false, 's3e', false, 'j', 's', 'f', 'i', '1', 'r',
-        [])).to eq([{
+      expect(subject.send(:get_enrich_steps, c, false, 's3e', 'f', false, 'j', 's', 'f',
+          'i', '1', 'r', [])).to eq([{
         "type" => "CUSTOM_JAR",
         "name" => "Enrich raw events",
         "actionOnFailure" => "CANCEL_AND_WAIT",
         "jar" => "j",
         "arguments" => [ "com.snowplowanalytics.snowplow.enrich.hadoop.EtlJob",
-          "--hdfs", "--input_format", "cloudfront", "--etl_tstamp", "1",
+          "--hdfs", "--input_format", "f", "--etl_tstamp", "1",
           "--iglu_config", "cg==", "--enrichments",
           "eyJzY2hlbWEiOiJpZ2x1OmNvbS5zbm93cGxvd2FuYWx5dGljcy5zbm93cGxvdy9lbnJpY2htZW50cy9qc29uc2NoZW1hLzEtMC0wIiwiZGF0YSI6W119",
-          "--input_folder", "rp", "--output_folder", "s", "--bad_rows_folder", "ebrun=i/" ]
+          "--input_folder", "rp/*", "--output_folder", "s", "--bad_rows_folder", "ebrun=i/" ]
       }])
     end
 
     it 'should build all necessary steps is s3distcp is true' do
-      expect(subject.send(:get_enrich_steps, c, false, 's3e', true, 'j', 's', 'f', 'i', '1', 'r',
-        [])).to eq([
+      expect(subject.send(:get_enrich_steps, c, false, 's3e', 'cloudfront', true, 'j', 's', 'f',
+          'i', '1', 'r', [])).to eq([
         {
           "type" => "CUSTOM_JAR",
           "name" => "S3DistCp: raw S3 -> HDFS",
           "actionOnFailure" => "CANCEL_AND_WAIT",
           "jar" => "/usr/share/aws/emr/s3-dist-cp/lib/s3-dist-cp.jar",
           "arguments" => [ "--src", "rp", "--dest", "hdfs:///local/snowplow/raw-events/",
-            "--s3Endpoint", "s3e", "--groupBy", ".*\\.([0-9]+-[0-9]+-[0-9]+)-[0-9]+\\..*",
+            "--s3Endpoint", "s3e", "--groupBy", ".*([0-9]+-[0-9]+-[0-9]+).*",
             "--targetSize", "128", "--outputCodec", "lzo" ]
         },
         {
@@ -367,7 +391,7 @@ describe EmrPlaybookGenerator do
             "--hdfs", "--input_format", "cloudfront", "--etl_tstamp", "1",
             "--iglu_config", "cg==", "--enrichments",
             "eyJzY2hlbWEiOiJpZ2x1OmNvbS5zbm93cGxvd2FuYWx5dGljcy5zbm93cGxvdy9lbnJpY2htZW50cy9qc29uc2NoZW1hLzEtMC0wIiwiZGF0YSI6W119",
-            "--input_folder", "hdfs:///local/snowplow/raw-events/", "--output_folder", "s",
+            "--input_folder", "hdfs:///local/snowplow/raw-events/*", "--output_folder", "s",
             "--bad_rows_folder", "ebrun=i/" ]
         },
         {

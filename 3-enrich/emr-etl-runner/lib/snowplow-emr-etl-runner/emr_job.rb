@@ -60,6 +60,7 @@ module Snowplow
       JAVA_PACKAGE = "com.snowplowanalytics.snowplow"
       PARTFILE_REGEXP = ".*part-.*"
       BOOTSTRAP_FAILURE_INDICATOR = /BOOTSTRAP_FAILURE|bootstrap action|Master instance startup failed/
+      DIR_NOT_EMPTY_FAILURE_INDICATOR = /check-dir-empty/
       STANDARD_HOSTED_ASSETS = "s3://snowplow-hosted-assets"
 
       # Need to understand the status of all our jobflow steps
@@ -70,14 +71,16 @@ module Snowplow
       include Snowplow::EmrEtlRunner::Utils
 
       # Initializes our wrapper for the Amazon EMR client.
-      Contract Bool, Bool, Bool, Bool, Bool, Bool, ConfigHash, ArrayOf[String], String => EmrJob
-      def initialize(debug, enrich, shred, elasticsearch, s3distcp, archive_raw, config, enrichments_array, resolver)
+      Contract Bool, Bool, Bool, Bool, Bool, Bool, Bool, ConfigHash, ArrayOf[String], String => EmrJob
+      def initialize(debug, staging, enrich, shred, elasticsearch, s3distcp, archive_raw, config, enrichments_array, resolver)
 
         logger.debug "Initializing EMR jobflow"
 
         # Configuration
         custom_assets_bucket =
           get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, config[:aws][:s3][:buckets][:assets], config[:aws][:emr][:region])
+        standard_assets_bucket =
+          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, STANDARD_HOSTED_ASSETS, config[:aws][:emr][:region])
         assets = get_assets(
           custom_assets_bucket,
           config[:enrich][:versions][:hadoop_enrich],
@@ -135,6 +138,26 @@ module Snowplow
         @jobflow.master_instance_type = config[:aws][:emr][:jobflow][:master_instance_type]
         @jobflow.slave_instance_type  = config[:aws][:emr][:jobflow][:core_instance_type]
 
+        s3_endpoint = get_s3_endpoint(config[:aws][:s3][:region])
+        csbr = config[:aws][:s3][:buckets][:raw]
+        csbe = config[:aws][:s3][:buckets][:enriched]
+        csbs = config[:aws][:s3][:buckets][:shredded]
+
+        # staging
+        if staging
+          # Sanity check before staging: processing should be empty
+          @jobflow.add_step(get_check_dir_empty_step(csbr[:processing], standard_assets_bucket))
+
+          # TODO: Staging step
+
+          # Sanity check steps after staging:
+          # - enriched and shredded should be empty
+          [ enrich ? csbe[:good] : '', shred ? csbs[:good] : '' ].reject { |s| s == '' }.each do |l|
+            @jobflow.add_step(get_check_dir_empty_step(l, standard_assets_bucket))
+          end
+        end
+
+        # EBS
         unless config[:aws][:emr][:jobflow][:core_instance_ebs].nil?
           ebs_bdc = Elasticity::EbsBlockDeviceConfig.new
 
@@ -156,6 +179,7 @@ module Snowplow
           @jobflow.set_core_ebs_configuration(ebs_c)
         end
 
+        # Patching of the hadoop config files for thrift
         if collector_format == 'thrift'
           if @legacy
             [
@@ -178,8 +202,6 @@ module Snowplow
         end
 
         # Prepare a bootstrap action based on the AMI version
-        standard_assets_bucket =
-          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, STANDARD_HOSTED_ASSETS, config[:aws][:emr][:region])
         bootstrap_script_location = if @legacy
           "#{standard_assets_bucket}common/emr/snowplow-ami3-bootstrap-0.1.0.sh"
         else
@@ -224,10 +246,6 @@ module Snowplow
 
           @jobflow.set_task_instance_group(instance_group)
         end
-
-        s3_endpoint = get_s3_endpoint(config[:aws][:s3][:region])
-        csbr = config[:aws][:s3][:buckets][:raw]
-        csbe = config[:aws][:s3][:buckets][:enriched]
 
         enrich_final_output = if enrich
           partition_by_run(csbe[:good], run_id)
@@ -304,10 +322,7 @@ module Snowplow
           )
 
           # Late check whether our enrichment directory is empty. We do an early check too
-          csbe_good_loc = Sluice::Storage::S3::Location.new(csbe[:good])
-          unless Sluice::Storage::S3::is_empty?(s3, csbe_good_loc)
-            raise DirectoryNotEmptyError, "Cannot safely add enrichment step to jobflow, #{csbe_good_loc} is not empty"
-          end
+          @jobflow.add_step(get_check_dir_empty_step(csbe[:good], standard_assets_bucket))
           @jobflow.add_step(enrich_step)
 
           if s3distcp
@@ -338,7 +353,6 @@ module Snowplow
         if shred
 
           # 3. Shredding
-          csbs = config[:aws][:s3][:buckets][:shredded]
           shred_final_output = partition_by_run(csbs[:good], run_id)
           shred_step_output = if s3distcp
             "hdfs:///local/snowplow/shredded-events/"
@@ -374,10 +388,7 @@ module Snowplow
           )
 
           # Late check whether our target directory is empty
-          csbs_good_loc = Sluice::Storage::S3::Location.new(csbs[:good])
-          unless Sluice::Storage::S3::is_empty?(s3, csbs_good_loc)
-            raise DirectoryNotEmptyError, "Cannot safely add shredding step to jobflow, #{csbs_good_loc} is not empty"
-          end
+          @jobflow.add_step(get_check_dir_empty_step(csbs[:good], standard_assets_bucket))
           @jobflow.add_step(shred_step)
 
           if s3distcp
@@ -417,7 +428,6 @@ module Snowplow
       end
 
       # Create one step for each Elasticsearch target for each source for that target
-      #
       Contract ConfigHash, Hash, Bool, Bool => ArrayOf[ScaldingStep]
       def get_elasticsearch_steps(config, assets, enrich, shred)
         elasticsearch_targets = config[:storage][:targets].select {|t| t[:type] == 'elasticsearch'}
@@ -488,6 +498,10 @@ module Snowplow
           end
           raise BootstrapFailureError, get_failure_details(jobflow_id)
 
+        elsif not status.dir_not_empty_failures.empty?
+          raise DirectoryNotEmptyError,
+            "The following directories should have been empty:\n#{status.dir_not_empty_failures.join("\n")}"
+
         else
           if snowplow_tracking_enabled
             Monitoring::Snowplow.instance.track_job_failed(@jobflow)
@@ -539,8 +553,8 @@ module Snowplow
       def wait_for()
 
         success = false
-
         bootstrap_failure = false
+        dir_not_empty_failures = false
 
         # Loop until we can quit...
         while true do
@@ -554,6 +568,7 @@ module Snowplow
             if statuses[0] == 0
               success = statuses[1] == 0 # True if no failures
               bootstrap_failure = EmrJob.bootstrap_failure?(@jobflow)
+              dir_not_empty_failures = EmrJob.dir_not_empty_failures(@jobflow)
               break
             else
               # Sleep a while before we check again
@@ -587,7 +602,7 @@ module Snowplow
           end
         end
 
-        JobResult.new(success, bootstrap_failure)
+        JobResult.new(success, bootstrap_failure, dir_not_empty_failures)
       end
 
       # Prettified string containing failure details
@@ -672,6 +687,25 @@ module Snowplow
       def self.bootstrap_failure?(jobflow)
         jobflow.cluster_step_status.all? {|s| s.state == 'CANCELLED'} &&
         (! (jobflow.cluster_status.last_state_change_reason =~ BOOTSTRAP_FAILURE_INDICATOR).nil?)
+      end
+
+      # Returns the directories that should have been empty
+      Contract Elasticity::JobFlow => ArrayOf[String]
+      def self.dir_not_empty_failures(jobflow)
+        jobflow.cluster_step_status.filter? { |s|
+          s.state == 'FAILED' && s.args.any? { |a| a =~ DIR_NOT_EMPTY_FAILURE_INDICATOR }
+        }.map { |s| s.args[1] }
+      end
+
+      # Builds a script step checking that the specified location is empty
+      Contract String, String => Elasticity::ScriptStep
+      def self.get_check_dir_empty_step(location, bucket)
+        get_check_step(location, "#{bucket}common/emr/snowplow-check-dir-empty.sh")
+      end
+
+      Contract String, String => Elasticity::ScriptStep
+      def self.get_check_step(location, script)
+        Elasticity::ScriptStep.new(script, location)
       end
 
     end

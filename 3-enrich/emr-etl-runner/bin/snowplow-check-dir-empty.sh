@@ -1,3 +1,5 @@
+#!/bin/sh
+
 # Copyright (c) 2012-2014 Snowplow Analytics Ltd. All rights reserved.
 #
 # This program is licensed to you under the Apache License Version 2.0,
@@ -9,21 +11,16 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the Apache License Version 2.0 for the specific language governing permissions and limitations there under.
 
-# Author::    Alex Dean (mailto:support@snowplowanalytics.com)
+# Author::    Ben Fradet (mailto:support@snowplowanalytics.com)
 # Copyright:: Copyright (c) 2012-2014 Snowplow Analytics Ltd
 # License::   Apache License Version 2.0
 
-module Snowplow
-  module EmrEtlRunner
-    class JobResult
-
-      attr_reader :successful, :bootstrap_failure, :dir_not_empty_failures
-
-      def initialize(successful, bootstrap_failure, dir_not_empty_failures)
-        @successful = successful
-        @bootstrap_failure = bootstrap_failure
-        @dir_not_empty_failures = dir_not_empty_failures
-      end
-    end
-  end
-end
+# Checks that a S3 folder is empty
+CNT=$(aws s3 ls $1 | wc -l)
+if [ "$CNT" -eq 0 ]; then
+  echo "$1 is empty"
+  exit 0
+else
+  echo "$1 is not empty" 1>&2
+  exit 1
+fi

@@ -9,21 +9,26 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the Apache License Version 2.0 for the specific language governing permissions and limitations there under.
 
-# Author::    Alex Dean (mailto:support@snowplowanalytics.com)
+# Author::    Ben Fradet (mailto:support@snowplowanalytics.com)
 # Copyright:: Copyright (c) 2012-2014 Snowplow Analytics Ltd
 # License::   Apache License Version 2.0
 
-module Snowplow
-  module EmrEtlRunner
-    class JobResult
+require 'spec_helper'
+require 'elasticity'
 
-      attr_reader :successful, :bootstrap_failure, :dir_not_empty_failures
+EmrJob = Snowplow::EmrEtlRunner::EmrJob
 
-      def initialize(successful, bootstrap_failure, dir_not_empty_failures)
-        @successful = successful
-        @bootstrap_failure = bootstrap_failure
-        @dir_not_empty_failures = dir_not_empty_failures
-      end
+describe EmrJob do
+  describe '.get_check_step' do
+    it 'should build a script step' do
+      expect(EmrJob.send(:get_check_step, 'l', 'script').arguments).to eq([ 'script', 'l' ])
+    end
+  end
+
+  describe '.get_check_dir_empty_step' do
+    it 'should build a check-dir-empty script step' do
+      expect(EmrJob.send(:get_check_dir_empty_step, 'l', 'b/').arguments).to eq(
+        [ 'b/common/emr/snowplow-check-dir-empty.sh', 'l' ])
     end
   end
 end

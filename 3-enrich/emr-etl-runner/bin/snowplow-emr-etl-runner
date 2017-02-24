@@ -77,7 +77,7 @@ begin
         puts "Valid enrichments"
       else
         raise runner::LinterError.new(
-          "Invalid enrichments:\n #{errors.map { |e| e.message }.join("\n")}")
+          "Invalid enrichments:\n#{errors.map { |e| e.message }.join("\n")}")
       end
     end
   end

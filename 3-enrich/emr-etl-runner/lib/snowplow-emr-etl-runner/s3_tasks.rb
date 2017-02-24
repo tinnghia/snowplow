@@ -119,27 +119,6 @@ module Snowplow
         in_locations = in_bucket_array.map {|name| Sluice::Storage::S3::Location.new(name)}
         processing_location = Sluice::Storage::S3::Location.new(config[:aws][:s3][:buckets][:raw][:processing])
 
-        # Check whether our processing directory is empty
-        unless Sluice::Storage::S3::is_empty?(s3, processing_location)
-          raise DirectoryNotEmptyError, "Should not stage files for enrichment, processing bucket #{processing_location} is not empty"
-        end
-
-        # Early check whether our enrichment directory is empty. We do a late check too
-        unless args[:skip].include?('emr') or args[:skip].include?('enrich')
-          enriched_location = Sluice::Storage::S3::Location.new(config[:aws][:s3][:buckets][:enriched][:good])
-          unless Sluice::Storage::S3::is_empty?(s3, enriched_location)
-            raise DirectoryNotEmptyError, "Should not stage files for enrichment, #{enriched_location} is not empty"
-          end
-        end
-
-        # Early check whether our shred directory is empty. We do a late check too
-        unless args[:skip].include?('emr') or args[:skip].include?('shred')
-          shred_location = Sluice::Storage::S3::Location.new(config[:aws][:s3][:buckets][:shredded][:good])
-          unless Sluice::Storage::S3::is_empty?(s3, shred_location)
-            raise DirectoryNotEmptyError, "Should not stage files for shredding, #{shred_location} is not empty"
-          end
-        end
-
         # Move the files we need to move (within the date span)
         files_to_move = case
         when (args[:start].nil? and args[:end].nil?)

@@ -54,6 +54,7 @@ module Snowplow
         end
 
         unless @args[:skip].include?('emr')
+          staging = not(@args[:skip].include?('staging'))
           enrich = not(@args[:skip].include?('enrich'))
           shred = not(@args[:skip].include?('shred'))
           s3distcp = not(@args[:skip].include?('s3distcp'))
@@ -65,7 +66,7 @@ module Snowplow
           while true
             begin
               tries_left -= 1
-              job = EmrJob.new(@args[:debug], enrich, shred, elasticsearch, s3distcp, archive_raw, @config, @enrichments_array, @resolver)
+              job = EmrJob.new(@args[:debug], staging, enrich, shred, elasticsearch, s3distcp, archive_raw, @config, @enrichments_array, @resolver)
               job.run(@config)
               break
             rescue BootstrapFailureError => bfe

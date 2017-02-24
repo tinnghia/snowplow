@@ -35,6 +35,7 @@ module Snowplow
 
       Contract ConfigHash, Bool, ArrayOf[String], String, ArrayOf[String] => Hash
       def create_datum(config, debug, skip, resolver, enrichments)
+        staging = not(skip.include?('staging'))
         enrich = not(skip.include?('enrich'))
         shred = not(skip.include?('shred'))
         s3distcp = not(skip.include?('s3distcp'))
@@ -48,18 +49,41 @@ module Snowplow
             "secretAccessKey" => config[:aws][:secret_access_key]
           },
           "steps" =>
-            get_steps(config, debug, enrich, shred, s3distcp, elasticsearch, archive_raw,
+            get_steps(config, debug, staging, enrich, shred, s3distcp, elasticsearch, archive_raw,
               resolver, enrichments)
         }
       end
 
       private
 
-      Contract ConfigHash, Bool, Bool, Bool, Bool, Bool, Bool,
+      Contract ConfigHash, Bool, Bool, Bool, Bool, Bool, Bool, Bool,
         String, ArrayOf[String] => ArrayOf[Hash]
-      def get_steps(config, debug, enrich, shred, s3distcp, elasticsearch, archive_raw,
+      def get_steps(config, debug, staging, enrich, shred, s3distcp, elasticsearch, archive_raw,
           resolver, enrichments)
         steps = []
+
+        run_tstamp = Time.new
+        run_id = run_tstamp.strftime("%Y-%m-%d-%H-%M-%S")
+        custom_assets_bucket =
+          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, config[:aws][:s3][:buckets][:assets], config[:aws][:emr][:region])
+        standard_assets_bucket =
+          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, STANDARD_HOSTED_ASSETS, config[:aws][:emr][:region])
+        assets = get_assets(
+          custom_assets_bucket,
+          config[:enrich][:versions][:hadoop_enrich],
+          config[:enrich][:versions][:hadoop_shred],
+          config[:enrich][:versions][:hadoop_elasticsearch])
+        legacy = (not (config[:aws][:emr][:ami_version] =~ /^[1-3].*/).nil?)
+        s3_endpoint = get_s3_endpoint(config[:aws][:emr][:region])
+
+        csbr = config[:aws][:s3][:buckets][:raw]
+        csbe = config[:aws][:s3][:buckets][:enriched]
+        csbs = config[:aws][:s3][:buckets][:shredded]
+
+        if staging
+          steps += get_staging_steps(enrich, shred,
+            csbr[:processing], csbe[:good], csbs[:good], standard_assets_bucket)
+        end
 
         if debug
           steps << get_debugging_step(config[:aws][:emr][:region])
@@ -69,29 +93,20 @@ module Snowplow
           steps << get_hbase_step(config[:aws][:emr][:software][:hbase])
         end
 
-        run_tstamp = Time.new
-        run_id = run_tstamp.strftime("%Y-%m-%d-%H-%M-%S")
-        custom_assets_bucket =
-          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, config[:aws][:s3][:buckets][:assets], config[:aws][:emr][:region])
-        assets = get_assets(
-          custom_assets_bucket,
-          config[:enrich][:versions][:hadoop_enrich],
-          config[:enrich][:versions][:hadoop_shred],
-          config[:enrich][:versions][:hadoop_elasticsearch])
-        legacy = (not (config[:aws][:emr][:ami_version] =~ /^[1-3].*/).nil?)
-        s3_endpoint = get_s3_endpoint(config[:aws][:emr][:region])
-
-        csbe = config[:aws][:s3][:buckets][:enriched]
         enrich_final_output = enrich ? partition_by_run(csbe[:good], run_id) : csbe[:good]
         enrich_step_output = s3distcp ? 'hdfs:///local/snowplow/enriched-events/' : enrich_final_output
 
         if enrich
+          # Late check whether our target directory is empty
+          steps << get_check_dir_empty_step(csbe[:good], standard_assets_bucket)
           etl_tstamp = (run_tstamp.to_f * 1000).to_i.to_s
           steps += get_enrich_steps(config, legacy, s3_endpoint, s3distcp, assets[:enrich],
             enrich_step_output, enrich_final_output, run_id, etl_tstamp, resolver, enrichments)
         end
 
         if shred
+          # Late check whether our target directory is empty
+          steps << get_check_dir_empty_step(csbs[:good], standard_assets_bucket)
           steps += get_shred_steps(config, legacy, s3_endpoint, s3distcp, enrich, assets[:shred],
             enrich_step_output, enrich_final_output, run_id, resolver)
         end
@@ -102,13 +117,29 @@ module Snowplow
 
         if archive_raw
           steps << get_s3distcp_step(legacy, 'S3DistCp: raw S3 staging -> S3 archive',
-            config[:aws][:s3][:buckets][:raw][:processing],
-            partition_by_run(config[:aws][:s3][:buckets][:raw][:archive], run_id),
+            csbr[:processing],
+            partition_by_run(csbr[:archive], run_id),
             s3_endpoint,
             [ '--deleteOnSuccess' ]
           )
         end
 
+        steps
+      end
+
+      Contract Bool, Bool, String, String, String, String => ArrayOf[Hash]
+      def get_staging_steps(enrich, shred, csbr_processing, csbe_good, csbs_good, bucket)
+        steps = []
+        # Sanity check before staging: processing should be empty
+        steps << get_check_dir_empty_step(csbr_processing, bucket)
+
+        # TODO: Staging step
+
+        # Sanity check steps after staging:
+        # - enriched and shredded should be empty
+        [ enrich ? csbe_good : '', shred ? csbs_good : '' ].reject { |s| s == '' }.each do |l|
+          steps << get_check_dir_empty_step(l, bucket)
+        end
         steps
       end
 
@@ -204,6 +235,7 @@ module Snowplow
         to_hdfs = is_supported_collector_format(collector_format) && s3distcp
         raw_input = config[:aws][:s3][:buckets][:raw][:processing]
         enrich_step_input = to_hdfs ? 'hdfs:///local/snowplow/raw-events/' : raw_input
+        csbe = config[:aws][:s3][:buckets][:enriched]
 
         if to_hdfs
           added_args = if is_cloudfront_log(collector_format) || is_ua_ndjson(collector_format)
@@ -228,8 +260,8 @@ module Snowplow
           {
             :in     => enrich_step_input,
             :good   => enrich_step_output,
-            :bad    => partition_by_run(config[:aws][:s3][:buckets][:enriched][:bad], run_id),
-            :errors => partition_by_run(config[:aws][:s3][:buckets][:enriched][:errors], run_id, config[:enrich][:continue_on_unexpected_error])
+            :bad    => partition_by_run(csbe[:bad], run_id),
+            :errors => partition_by_run(csbe[:errors], run_id, config[:enrich][:continue_on_unexpected_error])
           },
           [
             '--input_format', collector_format,
@@ -303,6 +335,18 @@ module Snowplow
           "/home/hadoop/lib/hbase-#{hbase_version}.jar",
           [ "emr.hbase.backup.Main", "--start-master" ]
         )
+      end
+
+      Contract String, String => Hash
+      def get_check_dir_empty_step(location, bucket)
+        get_script_step("Checking that #{location} is empty",
+          "#{bucket}common/emr/snowplow-check-dir-empty.sh", [ location ])
+      end
+
+      Contract String, String, ArrayOf[String] => Hash
+      def get_script_step(name, script, args=[])
+        get_custom_jar_step(name, 's3://elasticmapreduce/libs/script-runner/script-runner.jar',
+          [script] + args)
       end
 
       Contract String, String, ArrayOf[String] => Hash

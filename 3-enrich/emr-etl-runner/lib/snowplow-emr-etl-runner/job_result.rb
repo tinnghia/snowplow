@@ -17,11 +17,12 @@ module Snowplow
   module EmrEtlRunner
     class JobResult
 
-      attr_reader :successful, :bootstrap_failure, :dir_not_empty_failures
+      attr_reader :successful, :bootstrap_failure, :no_data_failure, :dir_not_empty_failures
 
-      def initialize(successful, bootstrap_failure, dir_not_empty_failures)
+      def initialize(successful, bootstrap_failure, no_data_failure, dir_not_empty_failures)
         @successful = successful
         @bootstrap_failure = bootstrap_failure
+        @no_data_failure = no_data_failure
         @dir_not_empty_failures = dir_not_empty_failures
       end
     end

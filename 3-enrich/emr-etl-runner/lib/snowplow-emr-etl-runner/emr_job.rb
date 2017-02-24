@@ -60,6 +60,7 @@ module Snowplow
       JAVA_PACKAGE = "com.snowplowanalytics.snowplow"
       PARTFILE_REGEXP = ".*part-.*"
       BOOTSTRAP_FAILURE_INDICATOR = /BOOTSTRAP_FAILURE|bootstrap action|Master instance startup failed/
+      NO_DATA_FAILURE_INDICATOR = /check-data-to-process/
       DIR_NOT_EMPTY_FAILURE_INDICATOR = /check-dir-empty/
       STANDARD_HOSTED_ASSETS = "s3://snowplow-hosted-assets"
 
@@ -151,7 +152,9 @@ module Snowplow
           # TODO: Staging step
 
           # Sanity check steps after staging:
+          # - processing shoulnd't be empty
           # - enriched and shredded should be empty
+          @jobflow.add_step(get_check_data_to_process_step(csbr[:processing], standard_assets_bucket))
           [ enrich ? csbe[:good] : '', shred ? csbs[:good] : '' ].reject { |s| s == '' }.each do |l|
             @jobflow.add_step(get_check_dir_empty_step(l, standard_assets_bucket))
           end
@@ -416,7 +419,7 @@ module Snowplow
           archive_raw_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
           archive_raw_step.arguments = [
             "--src"        , csbr[:processing],
-            "--dest"       , self.class.partition_by_run(csbr[:archive], run_id),
+            "--dest"       , partition_by_run(csbr[:archive], run_id),
             "--s3Endpoint" , s3_endpoint,
             "--deleteOnSuccess"
           ]
@@ -498,6 +501,9 @@ module Snowplow
           end
           raise BootstrapFailureError, get_failure_details(jobflow_id)
 
+        elsif status.no_data_failure
+          raise NoDataToProcessError, "No Snowplow logs to process since last run"
+
         elsif not status.dir_not_empty_failures.empty?
           raise DirectoryNotEmptyError,
             "The following directories should have been empty:\n#{status.dir_not_empty_failures.join("\n")}"
@@ -554,6 +560,7 @@ module Snowplow
 
         success = false
         bootstrap_failure = false
+        no_data_failure = false
         dir_not_empty_failures = false
 
         # Loop until we can quit...
@@ -568,6 +575,7 @@ module Snowplow
             if statuses[0] == 0
               success = statuses[1] == 0 # True if no failures
               bootstrap_failure = EmrJob.bootstrap_failure?(@jobflow)
+              no_data_failure = EmrJob.no_data_failure?(@jobflow)
               dir_not_empty_failures = EmrJob.dir_not_empty_failures(@jobflow)
               break
             else
@@ -602,7 +610,7 @@ module Snowplow
           end
         end
 
-        JobResult.new(success, bootstrap_failure, dir_not_empty_failures)
+        JobResult.new(success, bootstrap_failure, no_data_failure, dir_not_empty_failures)
       end
 
       # Prettified string containing failure details
@@ -689,23 +697,41 @@ module Snowplow
         (! (jobflow.cluster_status.last_state_change_reason =~ BOOTSTRAP_FAILURE_INDICATOR).nil?)
       end
 
+      # Returns true if the jobflow failed due to the fact that there were no data to process
+      Contract Elasticity::JobFlow => Bool
+      def self.no_data_failure?(jobflow)
+        jobflow.cluster_step_status.any? { |s|
+          s.state == 'FAILED' && s.args.any? { |a| a =~ NO_DATA_FAILURE_INDICATOR }
+        }
+      end
+
       # Returns the directories that should have been empty
       Contract Elasticity::JobFlow => ArrayOf[String]
       def self.dir_not_empty_failures(jobflow)
-        jobflow.cluster_step_status.filter? { |s|
+        jobflow.cluster_step_status.select { |s|
           s.state == 'FAILED' && s.args.any? { |a| a =~ DIR_NOT_EMPTY_FAILURE_INDICATOR }
         }.map { |s| s.args[1] }
       end
 
-      # Builds a script step checking that the specified location is empty
+      # Builds a script step checking that there is data in the processing bucket
       Contract String, String => Elasticity::ScriptStep
-      def self.get_check_dir_empty_step(location, bucket)
-        get_check_step(location, "#{bucket}common/emr/snowplow-check-dir-empty.sh")
+      def get_check_data_to_process_step(location, bucket)
+        get_check_step("Checking that there is data to process in #{location}", location,
+          "#{bucket}common/emr/snowplow-check-data-to-process.sh")
       end
 
+      # Builds a script step checking that the specified location is empty
       Contract String, String => Elasticity::ScriptStep
-      def self.get_check_step(location, script)
-        Elasticity::ScriptStep.new(script, location)
+      def get_check_dir_empty_step(location, bucket)
+        get_check_step("Checking that #{location} is empty", location,
+          "#{bucket}common/emr/snowplow-check-dir-empty.sh")
+      end
+
+      Contract String, String, String => Elasticity::ScriptStep
+      def get_check_step(name, location, script)
+        step = Elasticity::ScriptStep.new(@jobflow.region, script, location)
+        step.name << ": #{name}"
+        step
       end
 
     end

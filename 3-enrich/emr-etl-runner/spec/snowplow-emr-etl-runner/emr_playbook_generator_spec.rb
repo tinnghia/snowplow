@@ -75,8 +75,15 @@ describe EmrPlaybookGenerator do
           "type" => "CUSTOM_JAR",
           "name" => "Checking that rp is empty",
           "actionOnFailure" => "CANCEL_AND_WAIT",
-          "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+          "jar" => "s3://eu-west-1.elasticmapreduce/libs/script-runner/script-runner.jar",
           "arguments" => [ "s3://snowplow-hosted-assets/common/emr/snowplow-check-dir-empty.sh", "rp" ]
+        },
+        {
+          "type" => "CUSTOM_JAR",
+          "name" => "Checking that there is data to process in rp",
+          "actionOnFailure" => "CANCEL_AND_WAIT",
+          "jar" => "s3://eu-west-1.elasticmapreduce/libs/script-runner/script-runner.jar",
+          "arguments" => [ "s3://snowplow-hosted-assets/common/emr/snowplow-check-data-to-process.sh", "rp" ]
         }
       ])
     end
@@ -98,7 +105,7 @@ describe EmrPlaybookGenerator do
           "type" => "CUSTOM_JAR",
           "name" => "Checking that eg is empty",
           "actionOnFailure" => "CANCEL_AND_WAIT",
-          "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+          "jar" => "s3://eu-west-1.elasticmapreduce/libs/script-runner/script-runner.jar",
           "arguments" => [ "s3://snowplow-hosted-assets/common/emr/snowplow-check-dir-empty.sh", "eg" ]
       })
       expect(res[1]).to include({
@@ -123,7 +130,7 @@ describe EmrPlaybookGenerator do
           "type" => "CUSTOM_JAR",
           "name" => "Checking that sg is empty",
           "actionOnFailure" => "CANCEL_AND_WAIT",
-          "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+          "jar" => "s3://eu-west-1.elasticmapreduce/libs/script-runner/script-runner.jar",
           "arguments" => [ "s3://snowplow-hosted-assets/common/emr/snowplow-check-dir-empty.sh", "sg" ]
       })
       expect(res[1]).to include({
@@ -169,40 +176,54 @@ describe EmrPlaybookGenerator do
 
   describe '#get_staging_steps' do
     it 'should give back the check that processing is filled if enrich and shred are false' do
-      res = subject.send(:get_staging_steps, false, false, 'p', '', '', 'b/')
+      res = subject.send(:get_staging_steps, false, false, false, 'r', 's3', '', ['i'], 'p', '', '', 'b/')
       expect(res).to eql([
         {
           "type" => "CUSTOM_JAR",
           "name" => "Checking that p is empty",
           "actionOnFailure" => "CANCEL_AND_WAIT",
-          "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+          "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
           "arguments" => [ "b/common/emr/snowplow-check-dir-empty.sh", "p" ]
+        },
+        {
+          "type" => "CUSTOM_JAR",
+          "name" => "Checking that there is data to process in p",
+          "actionOnFailure" => "CANCEL_AND_WAIT",
+          "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
+          "arguments" => [ "b/common/emr/snowplow-check-data-to-process.sh", "p" ]
         }
       ])
     end
 
     it 'should give back the checks that processing, enrich and shred are empty if all is true' do
-      res = subject.send(:get_staging_steps, true, true, 'p', 'e', 's', 'b/')
+      res = subject.send(:get_staging_steps, true, true, false, 'r', 's3', '', ['i'], 'p', 'e', 's', 'b/')
       expect(res).to eql([
         {
           "type" => "CUSTOM_JAR",
           "name" => "Checking that p is empty",
           "actionOnFailure" => "CANCEL_AND_WAIT",
-          "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+          "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
           "arguments" => [ "b/common/emr/snowplow-check-dir-empty.sh", "p" ]
+        },
+        {
+          "type" => "CUSTOM_JAR",
+          "name" => "Checking that there is data to process in p",
+          "actionOnFailure" => "CANCEL_AND_WAIT",
+          "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
+          "arguments" => [ "b/common/emr/snowplow-check-data-to-process.sh", "p" ]
         },
         {
           "type" => "CUSTOM_JAR",
           "name" => "Checking that e is empty",
           "actionOnFailure" => "CANCEL_AND_WAIT",
-          "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+          "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
           "arguments" => [ "b/common/emr/snowplow-check-dir-empty.sh", "e" ]
         },
         {
           "type" => "CUSTOM_JAR",
           "name" => "Checking that s is empty",
           "actionOnFailure" => "CANCEL_AND_WAIT",
-          "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+          "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
           "arguments" => [ "b/common/emr/snowplow-check-dir-empty.sh", "s" ]
         }
       ])
@@ -463,33 +484,45 @@ describe EmrPlaybookGenerator do
 
   describe '#get_check_dir_empty_step' do
     it 'should create a script step with the proper script' do
-      expect(subject.send(:get_check_dir_empty_step, 'l', 'b/')).to eq({
+      expect(subject.send(:get_check_dir_empty_step, 'r', 'l', 'b/')).to eq({
         "type" => "CUSTOM_JAR",
         "name" => "Checking that l is empty",
         "actionOnFailure" => "CANCEL_AND_WAIT",
-        "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+        "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
         "arguments" => [ "b/common/emr/snowplow-check-dir-empty.sh", "l" ]
+      })
+    end
+  end
+
+  describe '#get_check_data_to_process_step' do
+    it 'should create a script step with the proper script' do
+      expect(subject.send(:get_check_data_to_process_step, 'r', 'l', 'b/')).to eq({
+        "type" => "CUSTOM_JAR",
+        "name" => "Checking that there is data to process in l",
+        "actionOnFailure" => "CANCEL_AND_WAIT",
+        "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
+        "arguments" => [ "b/common/emr/snowplow-check-data-to-process.sh", "l" ]
       })
     end
   end
 
   describe '#get_script_step' do
     it 'should create a proper script step without args' do
-      expect(subject.send(:get_script_step, 'n', 's', [])).to eq({
+      expect(subject.send(:get_script_step, 'r', 'n', 's', [])).to eq({
         "type" => "CUSTOM_JAR",
         "name" => "n",
         "actionOnFailure" => "CANCEL_AND_WAIT",
-        "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+        "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
         "arguments" => [ "s" ]
       })
     end
 
     it 'should create a proper script step with args' do
-      expect(subject.send(:get_script_step, 'n', 's', [ 'a' ])).to eq({
+      expect(subject.send(:get_script_step, 'r', 'n', 's', [ 'a' ])).to eq({
         "type" => "CUSTOM_JAR",
         "name" => "n",
         "actionOnFailure" => "CANCEL_AND_WAIT",
-        "jar" => "s3://elasticmapreduce/libs/script-runner/script-runner.jar",
+        "jar" => "s3://r.elasticmapreduce/libs/script-runner/script-runner.jar",
         "arguments" => [ "s", "a" ]
       })
     end

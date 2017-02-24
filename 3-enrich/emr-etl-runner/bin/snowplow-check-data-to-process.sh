@@ -1,3 +1,5 @@
+#!/bin/sh
+
 # Copyright (c) 2012-2014 Snowplow Analytics Ltd. All rights reserved.
 #
 # This program is licensed to you under the Apache License Version 2.0,
@@ -13,22 +15,12 @@
 # Copyright:: Copyright (c) 2012-2014 Snowplow Analytics Ltd
 # License::   Apache License Version 2.0
 
-require 'spec_helper'
-require 'elasticity'
-
-EmrJob = Snowplow::EmrEtlRunner::EmrJob
-
-describe EmrJob do
-  describe '.get_check_step' do
-    it 'should build a script step' do
-      expect(EmrJob.send(:get_check_step, 'l', 'script').arguments).to eq([ 'script', 'l' ])
-    end
-  end
-
-  describe '.get_check_dir_empty_step' do
-    it 'should build a check-dir-empty script step' do
-      expect(EmrJob.send(:get_check_dir_empty_step, 'l', 'b/').arguments).to eq(
-        [ 'b/common/emr/snowplow-check-dir-empty.sh', 'l' ])
-    end
-  end
-end
+# Checks that a S3 folder is not empty
+CNT=$(aws s3 ls $1 | wc -l)
+if [ "$CNT" -eq 0 ]; then
+  echo "$1 is empty" 1>&2
+  exit 1
+else
+  echo "$1 is not empty"
+  exit 0
+fi

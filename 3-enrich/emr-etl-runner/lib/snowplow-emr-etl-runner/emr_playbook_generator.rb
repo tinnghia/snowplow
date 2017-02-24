@@ -62,31 +62,33 @@ module Snowplow
           resolver, enrichments)
         steps = []
 
+        region = config[:aws][:emr][:region]
         run_tstamp = Time.new
         run_id = run_tstamp.strftime("%Y-%m-%d-%H-%M-%S")
         custom_assets_bucket =
-          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, config[:aws][:s3][:buckets][:assets], config[:aws][:emr][:region])
+          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, config[:aws][:s3][:buckets][:assets], region)
         standard_assets_bucket =
-          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, STANDARD_HOSTED_ASSETS, config[:aws][:emr][:region])
+          get_hosted_assets_bucket(STANDARD_HOSTED_ASSETS, STANDARD_HOSTED_ASSETS, region)
         assets = get_assets(
           custom_assets_bucket,
           config[:enrich][:versions][:hadoop_enrich],
           config[:enrich][:versions][:hadoop_shred],
           config[:enrich][:versions][:hadoop_elasticsearch])
         legacy = (not (config[:aws][:emr][:ami_version] =~ /^[1-3].*/).nil?)
-        s3_endpoint = get_s3_endpoint(config[:aws][:emr][:region])
+        s3_endpoint = get_s3_endpoint(region)
+        collector_format = config[:collectors][:format]
 
         csbr = config[:aws][:s3][:buckets][:raw]
         csbe = config[:aws][:s3][:buckets][:enriched]
         csbs = config[:aws][:s3][:buckets][:shredded]
 
         if staging
-          steps += get_staging_steps(enrich, shred,
-            csbr[:processing], csbe[:good], csbs[:good], standard_assets_bucket)
+          steps += get_staging_steps(enrich, shred, legacy, region, s3_endpoint, collector_format,
+            csbr[:in], csbr[:processing], csbe[:good], csbs[:good], standard_assets_bucket)
         end
 
         if debug
-          steps << get_debugging_step(config[:aws][:emr][:region])
+          steps << get_debugging_step(region)
         end
 
         if config[:aws][:emr][:software][:hbase]
@@ -98,7 +100,7 @@ module Snowplow
 
         if enrich
           # Late check whether our target directory is empty
-          steps << get_check_dir_empty_step(csbe[:good], standard_assets_bucket)
+          steps << get_check_dir_empty_step(region, csbe[:good], standard_assets_bucket)
           etl_tstamp = (run_tstamp.to_f * 1000).to_i.to_s
           steps += get_enrich_steps(config, legacy, s3_endpoint, s3distcp, assets[:enrich],
             enrich_step_output, enrich_final_output, run_id, etl_tstamp, resolver, enrichments)
@@ -106,7 +108,7 @@ module Snowplow
 
         if shred
           # Late check whether our target directory is empty
-          steps << get_check_dir_empty_step(csbs[:good], standard_assets_bucket)
+          steps << get_check_dir_empty_step(region, csbs[:good], standard_assets_bucket)
           steps += get_shred_steps(config, legacy, s3_endpoint, s3distcp, enrich, assets[:shred],
             enrich_step_output, enrich_final_output, run_id, resolver)
         end
@@ -127,18 +129,22 @@ module Snowplow
         steps
       end
 
-      Contract Bool, Bool, String, String, String, String => ArrayOf[Hash]
-      def get_staging_steps(enrich, shred, csbr_processing, csbe_good, csbs_good, bucket)
+      Contract Bool, Bool, Bool, String, String, String,
+        ArrayOf[String], String, String, String, String => ArrayOf[Hash]
+      def get_staging_steps(enrich, shred, legacy, region, s3_endpoint, collector_format,
+          csbr_in, csbr_processing, csbe_good, csbs_good, bucket)
         steps = []
         # Sanity check before staging: processing should be empty
-        steps << get_check_dir_empty_step(csbr_processing, bucket)
+        steps << get_check_dir_empty_step(region, csbr_processing, bucket)
 
         # TODO: Staging step
 
         # Sanity check steps after staging:
+        # - processing shouldn't be empty
         # - enriched and shredded should be empty
+        steps << get_check_data_to_process_step(region, csbr_processing, bucket)
         [ enrich ? csbe_good : '', shred ? csbs_good : '' ].reject { |s| s == '' }.each do |l|
-          steps << get_check_dir_empty_step(l, bucket)
+          steps << get_check_dir_empty_step(region, l, bucket)
         end
         steps
       end
@@ -337,16 +343,22 @@ module Snowplow
         )
       end
 
-      Contract String, String => Hash
-      def get_check_dir_empty_step(location, bucket)
-        get_script_step("Checking that #{location} is empty",
+      Contract String, String, String => Hash
+      def get_check_data_to_process_step(region, location, bucket)
+        get_script_step(region, "Checking that there is data to process in #{location}",
+          "#{bucket}common/emr/snowplow-check-data-to-process.sh", [ location ])
+      end
+
+      Contract String, String, String => Hash
+      def get_check_dir_empty_step(region, location, bucket)
+        get_script_step(region, "Checking that #{location} is empty",
           "#{bucket}common/emr/snowplow-check-dir-empty.sh", [ location ])
       end
 
-      Contract String, String, ArrayOf[String] => Hash
-      def get_script_step(name, script, args=[])
-        get_custom_jar_step(name, 's3://elasticmapreduce/libs/script-runner/script-runner.jar',
-          [script] + args)
+      Contract String, String, String, ArrayOf[String] => Hash
+      def get_script_step(region, name, script, args=[])
+        get_custom_jar_step(name,
+          "s3://#{region}.elasticmapreduce/libs/script-runner/script-runner.jar", [script] + args)
       end
 
       Contract String, String, ArrayOf[String] => Hash

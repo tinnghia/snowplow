@@ -83,7 +83,7 @@ class TargetsSpec extends Specification { def is = s2"""
       "ADD HERE",
       "ADD HERE")
 
-    Targets.fooo(resolver, config) must beRight(expected)
+    Targets.parseTarget(resolver, config) must beRight(expected)
   }
 
   def e2 = {
@@ -118,7 +118,7 @@ class TargetsSpec extends Specification { def is = s2"""
       1,
       20000)
 
-    Targets.fooo(resolver, config) must beRight(expected)
+    Targets.parseTarget(resolver, config) must beRight(expected)
   }
 
   def e3 = {
@@ -145,7 +145,7 @@ class TargetsSpec extends Specification { def is = s2"""
       "ADD HERE",
       false)
 
-    Targets.fooo(resolver, config) must beRight(expected)
+    Targets.parseTarget(resolver, config) must beRight(expected)
   }
 
   def e4 = {
@@ -170,6 +170,6 @@ class TargetsSpec extends Specification { def is = s2"""
       "ADD HERE",
       "ADD HERE")
 
-    Targets.fooo(resolver, config) must beRight(expected)
+    Targets.parseTarget(resolver, config) must beRight(expected)
   }
 }

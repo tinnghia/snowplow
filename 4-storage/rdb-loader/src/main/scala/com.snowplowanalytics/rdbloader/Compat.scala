@@ -12,16 +12,16 @@
  */
 package com.snowplowanalytics.rdbloader
 
-// Scala
 import com.github.fge.jsonschema.core.report.ProcessingMessage
 
 import scala.language.implicitConversions
+import scalaz.ValidationNel
 
 // Circe
 import io.circe.Json
 
 // Cats
-import cats.data.{ NonEmptyList => NonEmptyListCats, Validated }
+import cats.data.{ NonEmptyList => NonEmptyListCats, Validated, ValidatedNel }
 
 // Scalaz
 import scalaz.{ Validation, Success, Failure, NonEmptyList => NonEmptyListZ }
@@ -31,9 +31,6 @@ import org.json4s.JsonAST._
 
 object Compat {
 
-  implicit def messages(nel: NonEmptyListZ[ProcessingMessage]): ValidationError =
-    ValidationError(nel.list)
-
   implicit def validated[L, R](z: Validation[L, R]): Validated[L, R] = z match {
     case Success(a) => Validated.Valid(a)
     case Failure(list) => Validated.Invalid(list)
@@ -41,6 +38,12 @@ object Compat {
 
   implicit def nel[A](z: NonEmptyListZ[A]): NonEmptyListCats[A] =
     NonEmptyListCats(z.head, z.tail)
+
+  implicit def validMes(v: ProcessingMessage): ConfigError =
+    ValidationError(v)
+
+  implicit def validatedNel[L, R](z: ValidationNel[L, R]): cats.data.ValidatedNel[L, R] =
+    z.fold((l: NonEmptyListZ[L]) => Validated.Invalid(l), r => Validated.Valid(r))
 
 
   implicit def jvalueToCirce(jValue: JValue): Json = jValue match {

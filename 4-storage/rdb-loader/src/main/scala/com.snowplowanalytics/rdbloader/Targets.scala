@@ -1,8 +1,12 @@
 package com.snowplowanalytics.rdbloader
 
+import java.io.File
+
 import scala.util.control.NonFatal
 
+import cats.data.ValidatedNel
 import cats.syntax.either._
+import cats.syntax.validated._
 
 import io.circe.{Json, ParsingFailure}
 import io.circe.Decoder._
@@ -11,12 +15,15 @@ import io.circe.generic.auto._
 import org.json4s.JValue
 import org.json4s.jackson.{parseJson => parseJson4s}
 
+import com.github.fge.jsonschema.core.report.ProcessingMessage
+
 // Iglu client
 import com.snowplowanalytics.iglu.core.SchemaKey
 import com.snowplowanalytics.iglu.client.Resolver
 import com.snowplowanalytics.iglu.client.validation.ValidatableJValue._
 
 import Utils._
+import Compat._
 
 object Targets {
 
@@ -49,17 +56,36 @@ object Targets {
       case NonFatal(e) => ParseError(ParsingFailure("Invalid storage target JSON", e)).asLeft
     }
 
-  def validate(resolver: Resolver, json: JValue): Either[ValidationError, Json] = {
-    json.validate(dataOnly = false)(resolver).leftMap(l => ValidationError(l.list)).toEither.map(Compat.jvalueToCirce)
+
+  def loadFromFile(resolver: Resolver)(file: File): ValidatedNel[ConfigError, StorageTarget] = {
+    val content = readFile(file).toValidatedNel
+    content.andThen(parseTarget(resolver))
   }
 
-  def fooo(resolver: Resolver)(target: String): Either[ConfigError, StorageTarget] = {
-    for {
-      j <- safeParse(target)
-      p <- validate(resolver, j)
-      s <- decodeStorageTarget(p)
-    } yield s
+
+  def validate(resolver: Resolver)(json: JValue): ValidatedNel[ConfigError, Json] = {
+    val result: ValidatedNel[ProcessingMessage, JValue] = json.validate(dataOnly = false)(resolver)
+    result.map(Compat.jvalueToCirce).leftMapNel(ValidationError)  // Convert from Iglu client's format, TODO compat
   }
+
+
+  def loadTargetsFromDir(directory: File, resolver: Resolver): ValidatedNel[ConfigError, List[Targets.StorageTarget]] = {
+    if (!directory.isDirectory) ParseError(s"[${directory.getAbsolutePath}] is not a directory").invalidNel
+    else if (!directory.canRead) ParseError(s"Targets directory [${directory.getAbsolutePath} is not readable").invalidNel
+    else {
+      val fileList = directory.listFiles.toList
+      val targetsList = fileList.map(Targets.loadFromFile(resolver))
+      targetsList.sequenceU
+    }
+  }
+
+
+  def parseTarget(resolver: Resolver)(target: String): ValidatedNel[ConfigError, StorageTarget] = {
+    val json = safeParse(target).toValidatedNel
+    val validatedJson = json.andThen(validate(resolver))
+    validatedJson.andThen(decodeStorageTarget(_).toValidatedNel)
+  }
+
 
   def decodeStorageTarget(validJson: Json): Either[DecodingError, StorageTarget] = {
     val nameDataPair = for {

@@ -14,12 +14,12 @@
 package com.snowplowanalytics.rdbloader
 
 import scala.collection.immutable.SortedSet
-import scala.io.Source
-import scala.util.control.NonFatal
 
 import java.io.File
 
-import cats.data.ValidatedNel
+import org.json4s.JValue
+
+import cats.data.{ Validated, ValidatedNel }
 import cats.instances.list._
 import cats.data.Validated._
 import cats.syntax.traverse._
@@ -69,31 +69,26 @@ object Main extends App {
     include: SortedSet[OptionalWorkStep],
     skip: SortedSet[SkippableStep]) // Contains parsed configs
 
-  def readFile(file: File): Either[ConfigError, String] =
-    try {
-      Source.fromFile(file).getLines.mkString("\n").asRight
-    } catch {
-      case NonFatal(e) => ParseError(s"Configuration file [${file.getAbsolutePath}] cannot be parsed").asLeft
-    }
-
-  def loadTargetsFromDir(directory: File, resolver: Resolver): ValidatedNel[ConfigError, List[Targets.StorageTarget]] = {
-    if (!directory.isDirectory) ParseError(s"[${directory.getAbsolutePath}] is not a directory").invalidNel
-    else if (!directory.canRead) ParseError(s"Targets directory [${directory.getAbsolutePath} is not readable").invalidNel
-    else {
-      val loadTarget = Targets.fooo(resolver) _
-      val fileList = directory.listFiles.toList
-      val targetsList = fileList.map(f => readFile(f).flatMap(loadTarget))
-      targetsList.map(_.toValidatedNel).sequenceU
-    }
-  }
-
-  def loadResolver(resolverConfig: File): ValidatedNel[ConfigError, Resolver] = {
-    if (!resolverConfig.isFile) ParseError(s"[${resolverConfig.getAbsolutePath}] is not a file")
-    else if (!resolverConfig.canRead) ParseError(s"Resolver config [${resolverConfig.getAbsolutePath} is not readable").invalidNel
+  def loadResolver(resolverConfig: File): Validated[ConfigError, Resolver] = {
+    if (!resolverConfig.isFile) ParseError(s"[${resolverConfig.getAbsolutePath}] is not a file").invalid
+    else if (!resolverConfig.canRead) ParseError(s"Resolver config [${resolverConfig.getAbsolutePath} is not readable").invalid
     else {
       import Compat._
-      val f = readFile(resolverConfig).flatMap(Targets.safeParse).toValidatedNel
-      val z: ValidatedNel[ValidationError, Resolver] = f.andThen(json => Resolver.parse(json))
+      val json = readFile(resolverConfig).flatMap(Targets.safeParse).toValidatedNel
+
+      def myParse(json: JValue): ValidatedNel[ConfigError, Resolver] =  // This should be ValidatedNel[ConfigError, _]
+        Resolver.parse(json).fold(
+          messages => Invalid(nel(messages.map(m => ValidationError(m)))),
+          resolver => Valid(resolver)
+        )
+
+      val resolverZ: ValidatedNel[ConfigError, Resolver] =
+        json.andThen(myParse)
+
+
+      val f: ValidatedNel[String, Int] = ???
+
+      ???
     }
 
     ???

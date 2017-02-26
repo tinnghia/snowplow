@@ -8,7 +8,7 @@ import com.github.fge.jsonschema.core.report.ProcessingMessage
 sealed trait ConfigError
 case class ParseError(error: Option[ParsingFailure], message: Option[String]) extends ConfigError
 case class DecodingError(decodingFailure: Option[DecodingFailure], message: Option[String]) extends ConfigError
-case class ValidationError(processingMessages: List[ProcessingMessage]) extends ConfigError
+case class ValidationError(processingMessages: ProcessingMessage) extends ConfigError
 
 object ParseError {
   def apply(message: String): ParseError =
@@ -16,6 +16,8 @@ object ParseError {
 
   def apply(error: ParsingFailure): ParseError =
     ParseError(Some(error), None)
+
+
 }
 
 object DecodingError {

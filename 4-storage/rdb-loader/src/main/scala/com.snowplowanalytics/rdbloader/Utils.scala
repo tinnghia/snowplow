@@ -12,11 +12,17 @@
  */
 package com.snowplowanalytics.rdbloader
 
+// Java
+import java.io.File
+
 // Scala
+import scala.io.Source
 import scala.reflect.runtime.universe._
 import scala.reflect.runtime.{ universe => ru }
+import scala.util.control.NonFatal
 
 // Cats
+import cats.data.ValidatedNel
 import cats.syntax.either._
 
 // Circe
@@ -64,6 +70,25 @@ object Utils {
       case None => Left(DecodingFailure(s"Key [$key] is missing", hCursor.history))
     }
   }
+
+  /**
+   * Syntax extension to transform left type in `ValidationNel`
+   */
+  implicit class LeftMapNel[L, R](validation: ValidatedNel[L, R]) {
+    def leftMapNel[LL](l: L => LL): ValidatedNel[LL, R] =
+      validation.leftMap(_.map(l))
+  }
+
+  /**
+   * Read file content without throwing exceptions
+   */
+  def readFile(file: File): Either[ConfigError, String] =
+    try {
+      Source.fromFile(file).getLines.mkString("\n").asRight
+    } catch {
+      case NonFatal(_) => ParseError(s"File [${file.getAbsolutePath}] cannot be parsed").asLeft
+    }
+
 
   /**
    * Parse element of `StringEnum` sealed hierarchy from circe AST

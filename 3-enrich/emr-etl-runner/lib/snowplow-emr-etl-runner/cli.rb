@@ -59,8 +59,6 @@ module Snowplow
             opts.on('-n', '--enrichments ENRICHMENTS', 'enrichments directory') {|config| options[:enrichments_directory] = config}
             opts.on('-r', '--resolver RESOLVER', 'Iglu resolver file') {|config| options[:resolver_file] = config}
             opts.on('-d', '--debug', 'enable EMR Job Flow debugging') { |config| options[:debug] = true }
-            opts.on('-s', '--start YYYY-MM-DD', 'optional start date *') { |config| options[:start] = config }
-            opts.on('-e', '--end YYYY-MM-DD', 'optional end date *') { |config| options[:end] = config }
             opts.on('-x', '--skip staging,s3distcp,emr{enrich,shred,elasticsearch,archive_raw}', Array, 'skip work step(s)') { |config| options[:skip] = config }
             opts.on('-E', '--process-enrich LOCATION', 'run enrichment only on specified location. Implies --skip staging,shred,archive_raw') { |config|
               options[:process_enrich_location] = config
@@ -70,9 +68,6 @@ module Snowplow
               options[:process_shred_location] = config
               options[:skip] = %w(staging enrich archive_raw)
             }
-            opts.separator ''
-            opts.separator '* filters the raw event logs processed by EmrEtlRunner by their timestamp. Only'
-            opts.separator '  supported with \'cloudfront\' collector format currently.'
           end,
           'generate emr-config' => OptionParser.new do |opts|
             opts.banner = 'Usage: generate emr-config [options]'
@@ -177,8 +172,6 @@ module Snowplow
       def self.process_options(options, optparse, cmd_name)
         args = {
           :debug                   => options[:debug],
-          :start                   => options[:start],
-          :end                     => options[:end],
           :skip                    => options[:skip],
           :process_enrich_location => options[:process_enrich_location],
           :process_shred_location  => options[:process_shred_location]

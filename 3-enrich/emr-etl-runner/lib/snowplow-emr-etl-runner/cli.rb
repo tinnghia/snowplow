@@ -29,6 +29,10 @@ module Snowplow
 
       include Contracts
 
+      # Supported options
+      COLLECTOR_FORMAT_REGEX = /^(?:cloudfront|clj-tomcat|thrift|(?:json\/.+\/.+)|(?:tsv\/.+\/.+)|(?:ndjson\/.+\/.+))$/
+      RESUMABLES = Set.new(%w(enrich shred elasticsearch archive_raw))
+
       # Get our arguments, configuration,
       # enrichments and Iglu resolver.
       #
@@ -46,28 +50,17 @@ module Snowplow
       def self.get_args_config_enrichments_resolver
 
         # Defaults
-        options = {
-          :skip => [],
-          :debug => false
-        }
+        options = { :debug => false }
 
         commands = {
           'run' => OptionParser.new do |opts|
             opts.banner = 'Usage: run [options]'
             opts.description = 'Run the Snowplow pipeline on EMR'
             opts.on('-c', '--config CONFIG', 'configuration file') { |config| options[:config_file] = config }
-            opts.on('-n', '--enrichments ENRICHMENTS', 'enrichments directory') {|config| options[:enrichments_directory] = config}
-            opts.on('-r', '--resolver RESOLVER', 'Iglu resolver file') {|config| options[:resolver_file] = config}
+            opts.on('-n', '--enrichments ENRICHMENTS', 'enrichments directory') { |config| options[:enrichments_directory] = config }
+            opts.on('-r', '--resolver RESOLVER', 'Iglu resolver file') { |config| options[:resolver_file] = config }
             opts.on('-d', '--debug', 'enable EMR Job Flow debugging') { |config| options[:debug] = true }
-            opts.on('-x', '--skip staging,s3distcp,emr{enrich,shred,elasticsearch,archive_raw}', Array, 'skip work step(s)') { |config| options[:skip] = config }
-            opts.on('-E', '--process-enrich LOCATION', 'run enrichment only on specified location. Implies --skip staging,shred,archive_raw') { |config|
-              options[:process_enrich_location] = config
-              options[:skip] = %w(staging shred archive_raw)
-            }
-            opts.on('-S', '--process-shred LOCATION', 'run shredding only on specified location. Implies --skip staging,enrich,archive_raw') { |config|
-              options[:process_shred_location] = config
-              options[:skip] = %w(staging enrich archive_raw)
-            }
+            opts.on('-f', "--resume-from {#{RESUMABLES.to_a.join(',')}}", 'resume from the specified step') { |config| options[:resume_from] = config }
           end,
           'generate emr-config' => OptionParser.new do |opts|
             opts.banner = 'Usage: generate emr-config [options]'
@@ -81,21 +74,21 @@ module Snowplow
             opts.banner = 'Usage: generate emr-playbook [options]'
             opts.description = 'Generate a Dataflow Runner Playbook config which can be used with dataflow-runner run'
             opts.on('-c', '--config CONFIG', 'configuration file') { |config| options[:config_file] = config }
-            opts.on('-n', '--enrichments ENRICHMENTS', 'enrichments directory') {|config| options[:enrichments_directory] = config}
-            opts.on('-r', '--resolver RESOLVER', 'Iglu resolver file') {|config| options[:resolver_file] = config}
+            opts.on('-n', '--enrichments ENRICHMENTS', 'enrichments directory') { |config| options[:enrichments_directory] = config }
+            opts.on('-r', '--resolver RESOLVER', 'Iglu resolver file') { |config| options[:resolver_file] = config }
             opts.on('-d', '--debug', 'enable EMR Job Flow debugging') { |config| options[:debug] = true }
-            opts.on('-x', '--skip staging,s3distcp,emr{enrich,shred,elasticsearch,archive_raw}', Array, 'skip work step(s)') { |config| options[:skip] = config }
-            opts.on('-f', '--filename FILENAME', 'the name of the file to generate') { |config| options[:filename] = config }
+            opts.on('-f', "--resume-from {#{RESUMABLES.to_a.join(',')}}", 'resume from the specified step') { |config| options[:resume_from] = config }
+            opts.on('-o', '--filename FILENAME', 'the name of the file to generate') { |config| options[:filename] = config }
             opts.on('-s', '--schemaver VERSION', 'the version of the Avro schema to use') { |config| options[:schemaver] = config }
           end,
           'generate all' => OptionParser.new do |opts|
             opts.banner = 'Usage: generate all [options]'
             opts.description = 'Generate both a Dataflow Runner EMR (as emr-config.json) and Playbook (as emr-playbook.json) configs'
             opts.on('-c', '--config CONFIG', 'configuration file') { |config| options[:config_file] = config }
-            opts.on('-n', '--enrichments ENRICHMENTS', 'enrichments directory') {|config| options[:enrichments_directory] = config}
-            opts.on('-r', '--resolver RESOLVER', 'Iglu resolver file') {|config| options[:resolver_file] = config}
+            opts.on('-n', '--enrichments ENRICHMENTS', 'enrichments directory') { |config| options[:enrichments_directory] = config }
+            opts.on('-r', '--resolver RESOLVER', 'Iglu resolver file') { |config| options[:resolver_file] = config }
             opts.on('-d', '--debug', 'enable EMR Job Flow debugging') { |config| options[:debug] = true }
-            opts.on('-x', '--skip staging,s3distcp,emr{enrich,shred,elasticsearch,archive_raw}', Array, 'skip work step(s)') { |config| options[:skip] = config }
+            opts.on('-f', "--resume-from {#{RESUMABLES.to_a.join(',')}}", 'resume from the specified step') { |config| options[:resume_from] = config }
           end,
           'lint resolver' => OptionParser.new do |opts|
             opts.banner = 'Usage: lint resolver [options]'
@@ -171,10 +164,8 @@ module Snowplow
 
       def self.process_options(options, optparse, cmd_name)
         args = {
-          :debug                   => options[:debug],
-          :skip                    => options[:skip],
-          :process_enrich_location => options[:process_enrich_location],
-          :process_shred_location  => options[:process_shred_location]
+          :debug => options[:debug],
+          :resume_from => options[:resume_from]
         }
 
         summary = optparse.to_s
@@ -184,7 +175,7 @@ module Snowplow
           [ 'lint all', 'lint enrichments' ].include?(cmd_name))
         resolver = load_resolver(options[:resolver_file], summary)
 
-        [args, config, enrichments, resolver]
+        [args, config.nil? ? nil : validate_and_coalesce(args, config), enrichments, resolver]
       end
 
       # Validate our args, load our config YAML, check config and args don't conflict
@@ -245,6 +236,47 @@ module Snowplow
         end
 
         File.read(resolver_file)
+      end
+
+      # Adds trailing slashes to all non-nil bucket names in the hash
+      def self.add_trailing_slashes(bucketData)
+        if bucketData.class == ''.class
+          bucketData[-1].chr != '/' ? bucketData << '/' : bucketData
+        elsif bucketData.class == {}.class
+          bucketData.each {|k,v| add_trailing_slashes(v)}
+        elsif bucketData.class == [].class
+          bucketData.each {|b| add_trailing_slashes(b)}
+        end
+      end
+
+      # Validate our arguments against the configuration Hash
+      # Make updates to the configuration Hash based on the
+      # arguments
+      Contract ArgsHash, ConfigHash => ConfigHash
+      def self.validate_and_coalesce(args, config)
+
+        # Check our skip argument
+        unless args[:resume_from].nil?
+          unless RESUMABLES.include?(args[:resume_from])
+            raise ConfigError, "Invalid option: resume-from can be #{RESUMABLES.to_a.join(', ')}, not '#{args[:resume_from]}'"
+          end
+        end
+
+        collector_format = config[:collectors][:format]
+
+        # Validate the collector format
+        unless collector_format =~ COLLECTOR_FORMAT_REGEX
+          raise ConfigError, "collector_format '%s' not supported" % collector_format
+        end
+
+        if collector_format == 'thrift' and config[:aws][:emr][:ami_version].start_with?('2')
+          raise ConfigError, "Cannot process Thrift events with AMI version 2.x.x"
+        end
+
+        # Add trailing slashes if needed to the non-nil buckets
+        config[:aws][:s3][:buckets] = add_trailing_slashes(config[:aws][:s3][:buckets])
+
+        config
       end
 
     private

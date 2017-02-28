@@ -21,10 +21,6 @@ module Snowplow
 
       include Contracts
 
-      # Supported options
-      @@collector_format_regex = /^(?:cloudfront|clj-tomcat|thrift|(?:json\/.+\/.+)|(?:tsv\/.+\/.+)|(?:ndjson\/.+\/.+))$/
-      @@skip_options = Set.new(%w(staging s3distcp emr enrich shred elasticsearch archive_raw))
-
       include Monitoring::Logging
 
       # Initialize the class.
@@ -35,7 +31,7 @@ module Snowplow
         Monitoring::Logging::set_level config[:monitoring][:logging][:level]
 
         @args = args
-        @config = validate_and_coalesce(args, config)
+        @config = config
         @enrichments_array = enrichments_array
         @resolver = resolver
 
@@ -46,95 +42,38 @@ module Snowplow
       Contract None => nil
       def run
 
-        unless @args[:skip].include?('emr')
-          staging = not(@args[:skip].include?('staging'))
-          enrich = not(@args[:skip].include?('enrich'))
-          shred = not(@args[:skip].include?('shred'))
-          s3distcp = not(@args[:skip].include?('s3distcp'))
-          elasticsearch = not(@args[:skip].include?('elasticsearch'))
-          archive_raw = not(@args[:skip].include?('archive_raw'))
+        resume = @args[:resume_from]
+        steps = {
+          :staging => resume.nil?,
+          :enrich => (resume.nil? or resume == 'enrich'),
+          :shred => (resume.nil? or [ 'enrich', 'shred' ].include?(resume)),
+          :es => (resume.nil? or [ 'enrich', 'shred', 'elasticsearch' ].include?(resume))
+        }
 
-          # Keep relaunching the job until it succeeds or fails for a reason other than a bootstrap failure
-          tries_left = @config[:aws][:emr][:bootstrap_failure_tries]
-          while true
-            begin
-              tries_left -= 1
-              job = EmrJob.new(@args[:debug], staging, enrich, shred, elasticsearch, s3distcp, archive_raw, @config, @enrichments_array, @resolver)
-              job.run(@config)
-              break
-            rescue BootstrapFailureError => bfe
-              logger.warn "Job failed. #{tries_left} tries left..."
-              if tries_left > 0
-                # Random timeout between 0 and 10 minutes
-                bootstrap_timeout = rand(1..600)
-                logger.warn("Bootstrap failure detected, retrying in #{bootstrap_timeout} seconds...")
-                sleep(bootstrap_timeout)
-              else
-                raise
-              end
+        # Keep relaunching the job until it succeeds or fails for a reason other than a bootstrap failure
+        tries_left = @config[:aws][:emr][:bootstrap_failure_tries]
+        while true
+          begin
+            tries_left -= 1
+            job = EmrJob.new(@args[:debug], steps[:staging], steps[:enrich], steps[:shred], steps[:es],
+              @config, @enrichments_array, @resolver)
+            job.run(@config)
+            break
+          rescue BootstrapFailureError => bfe
+            logger.warn "Job failed. #{tries_left} tries left..."
+            if tries_left > 0
+              # Random timeout between 0 and 10 minutes
+              bootstrap_timeout = rand(1..600)
+              logger.warn("Bootstrap failure detected, retrying in #{bootstrap_timeout} seconds...")
+              sleep(bootstrap_timeout)
+            else
+              raise
             end
           end
         end
 
         logger.info "Completed successfully"
         nil
-      end
-
-      # Adds trailing slashes to all non-nil bucket names in the hash
-      def self.add_trailing_slashes(bucketData)
-        if bucketData.class == ''.class
-          bucketData[-1].chr != '/' ? bucketData << '/' : bucketData
-        elsif bucketData.class == {}.class
-          bucketData.each {|k,v| add_trailing_slashes(v)}
-        elsif bucketData.class == [].class
-          bucketData.each {|b| add_trailing_slashes(b)}
-        end
-      end
-
-      # Validate our arguments against the configuration Hash
-      # Make updates to the configuration Hash based on the
-      # arguments
-      Contract ArgsHash, ConfigHash => ConfigHash
-      def validate_and_coalesce(args, config)
-
-        # Check our skip argument
-        args[:skip].each { |opt|
-          unless @@skip_options.include?(opt)
-            raise ConfigError, "Invalid option: skip can be 'staging', 'emr', 'enrich', 'shred', 'elasticsearch', or 'archive_raw', not '#{opt}'"
-          end
-        }
-
-        input_collector_format = config[:collectors][:format]
-
-        # Validate the collector format
-        unless input_collector_format =~ @@collector_format_regex
-          raise ConfigError, "collector_format '%s' not supported" % input_collector_format
-        end
-
-        if input_collector_format == 'thrift'
-          if args[:skip].include?('s3distcp')
-            raise ConfigError, "Cannot process Thrift events with --skip s3distcp"
-          end
-          if config[:aws][:emr][:ami_version].start_with?('2')
-            raise ConfigError, "Cannot process Thrift events with AMI version 2.x.x"
-          end
-        end
-
-        # We can't process enrich and process shred
-        unless args[:process_enrich_location].nil? or args[:process_shred_location].nil?
-          raise ConfigError, "Cannot process enrich and process shred, choose one"
-        end
-        unless args[:process_enrich_location].nil?
-          config[:aws][:s3][:buckets][:raw][:processing] = args[:process_enrich_location]
-        end
-        unless args[:process_shred_location].nil?
-          config[:aws][:s3][:buckets][:enriched][:good] = args[:process_shred_location]
-        end
-
-        # Add trailing slashes if needed to the non-nil buckets
-        config[:aws][:s3][:buckets] = Runner.add_trailing_slashes(config[:aws][:s3][:buckets])
-
-        config
       end
 
     end

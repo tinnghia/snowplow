@@ -106,17 +106,26 @@ describe EmrPlaybookGenerator do
       }])
     end
 
-    it 'should give back only the enrich step (plus check empty) if only enrich is true' do
+    it 'should give back only the enrich steps (plus check empty) if only enrich is true' do
       res = subject.send(:get_steps, c, false, false, true, false, false, false, false, '', [])
-      expect(res.length).to eq(2)
+      expect(res.length).to eq(3)
       expect(res[0]).to eq({
-          "type" => "CUSTOM_JAR",
-          "name" => "Checking that eg is empty",
-          "actionOnFailure" => "CANCEL_AND_WAIT",
-          "jar" => "s3://eu-west-1.elasticmapreduce/libs/script-runner/script-runner.jar",
-          "arguments" => [ "s3://snowplow-hosted-assets/common/emr/snowplow-check-dir-empty.sh", "eg" ]
+        "type" => "CUSTOM_JAR",
+        "name" => "Checking that eg is empty",
+        "actionOnFailure" => "CANCEL_AND_WAIT",
+        "jar" => "s3://eu-west-1.elasticmapreduce/libs/script-runner/script-runner.jar",
+        "arguments" => [ "s3://snowplow-hosted-assets/common/emr/snowplow-check-dir-empty.sh", "eg" ]
       })
-      expect(res[1]).to include({
+      expect(res[1]).to eq({
+        "type" => "CUSTOM_JAR",
+        "name" => "S3DistCp: raw S3 -> HDFS",
+        "actionOnFailure" => "CANCEL_AND_WAIT",
+        "jar" => "/usr/share/aws/emr/s3-dist-cp/lib/s3-dist-cp.jar",
+        "arguments" => [ "--src", "rp", "--dest", "hdfs:///local/snowplow/raw-events/",
+          "--s3Endpoint", "s3-eu-west-1.amazonaws.com", "--groupBy", ".*([0-9]+-[0-9]+-[0-9]+).*",
+          "--targetSize", "128", "--outputCodec", "lzo" ]
+      })
+      expect(res[2]).to include({
         "type" => "CUSTOM_JAR",
         "name" => "Enrich raw events",
         "actionOnFailure" => "CANCEL_AND_WAIT",
@@ -126,7 +135,8 @@ describe EmrPlaybookGenerator do
           "--hdfs", "--input_format", "cloudfront", "--etl_tstamp", be_a(String),
           "--iglu_config", "", "--enrichments",
           "eyJzY2hlbWEiOiJpZ2x1OmNvbS5zbm93cGxvd2FuYWx5dGljcy5zbm93cGxvdy9lbnJpY2htZW50cy9qc29uc2NoZW1hLzEtMC0wIiwiZGF0YSI6W119",
-          "--input_folder", "rp/*", "--output_folder", be_a(String), "--bad_rows_folder", be_a(String)
+          "--input_folder", "hdfs:///local/snowplow/raw-events/*", "--output_folder", be_a(String),
+          "--bad_rows_folder", be_a(String)
         ]
       })
     end
@@ -355,21 +365,6 @@ describe EmrPlaybookGenerator do
   end
 
   describe '#get_enrich_steps' do
-    it 'should build only the enrich step is s3distcp is false' do
-      expect(subject.send(:get_enrich_steps, c, false, 's3e', 'f', false, 'j', 's', 'f',
-          'i', '1', 'r', [])).to eq([{
-        "type" => "CUSTOM_JAR",
-        "name" => "Enrich raw events",
-        "actionOnFailure" => "CANCEL_AND_WAIT",
-        "jar" => "j",
-        "arguments" => [ "com.snowplowanalytics.snowplow.enrich.hadoop.EtlJob",
-          "--hdfs", "--input_format", "f", "--etl_tstamp", "1",
-          "--iglu_config", "cg==", "--enrichments",
-          "eyJzY2hlbWEiOiJpZ2x1OmNvbS5zbm93cGxvd2FuYWx5dGljcy5zbm93cGxvdy9lbnJpY2htZW50cy9qc29uc2NoZW1hLzEtMC0wIiwiZGF0YSI6W119",
-          "--input_folder", "rp/*", "--output_folder", "s", "--bad_rows_folder", "ebrun=i/" ]
-      }])
-    end
-
     it 'should build all necessary steps is s3distcp is true' do
       expect(subject.send(:get_enrich_steps, c, false, 's3e', 'cloudfront', true, 'j', 's', 'f',
           'i', '1', 'r', [])).to eq([

@@ -58,6 +58,7 @@ module Snowplow
       # Constants
       JAVA_PACKAGE = "com.snowplowanalytics.snowplow"
       PARTFILE_REGEXP = ".*part-.*"
+      SUCCESS_REGEXP = ".*_SUCCESS"
       BOOTSTRAP_FAILURE_INDICATOR = /BOOTSTRAP_FAILURE|bootstrap action|Master instance startup failed/
       NO_DATA_FAILURE_INDICATOR = /check-data-to-process/
       DIR_NOT_EMPTY_FAILURE_INDICATOR = /check-dir-empty/
@@ -327,7 +328,7 @@ module Snowplow
           copy_success_file_step.arguments = [
             "--src"        , ENRICH_STEP_OUTPUT,
             "--dest"       , enrich_final_output,
-            "--srcPattern" , ".*_SUCCESS",
+            "--srcPattern" , SUCCESS_REGEXP,
             "--s3Endpoint" , s3_endpoint
           ]
           copy_success_file_step.name << ": Enriched HDFS _SUCCESS -> S3"
@@ -383,6 +384,16 @@ module Snowplow
           ] + output_codec
           copy_to_s3_step.name << ": Shredded HDFS -> S3"
           @jobflow.add_step(copy_to_s3_step)
+
+          copy_success_file_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
+          copy_success_file_step.arguments = [
+            "--src"        , SHRED_STEP_OUTPUT,
+            "--dest"       , shred_final_output,
+            "--srcPattern" , SUCCESS_REGEXP,
+            "--s3Endpoint" , s3_endpoint
+          ]
+          copy_success_file_step.name << ": Shredded HDFS _SUCCESS -> S3"
+          @jobflow.add_step(copy_success_file_step)
         end
 
         if es

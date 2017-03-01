@@ -53,6 +53,7 @@ class TargetsSpec extends Specification { def is = s2"""
     """.stripMargin)
 
   private val resolver = Resolver.parse(resolverConfig).toOption.get
+  private val parseWithDefaultResolver = Targets.parseTarget(resolver)(_)
 
   def e1 = {
     val config = """
@@ -83,7 +84,7 @@ class TargetsSpec extends Specification { def is = s2"""
       "ADD HERE",
       "ADD HERE")
 
-    Targets.parseTarget(resolver, config) must beRight(expected)
+    parseWithDefaultResolver(config).toEither must beRight(expected)
   }
 
   def e2 = {
@@ -118,7 +119,7 @@ class TargetsSpec extends Specification { def is = s2"""
       1,
       20000)
 
-    Targets.parseTarget(resolver, config) must beRight(expected)
+    parseWithDefaultResolver(config).toEither must beRight(expected)
   }
 
   def e3 = {
@@ -145,7 +146,7 @@ class TargetsSpec extends Specification { def is = s2"""
       "ADD HERE",
       false)
 
-    Targets.parseTarget(resolver, config) must beRight(expected)
+    parseWithDefaultResolver(config).toEither must beRight(expected)
   }
 
   def e4 = {
@@ -170,6 +171,6 @@ class TargetsSpec extends Specification { def is = s2"""
       "ADD HERE",
       "ADD HERE")
 
-    Targets.parseTarget(resolver, config) must beRight(expected)
+    parseWithDefaultResolver(config).toEither must beRight(expected)
   }
 }

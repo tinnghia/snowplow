@@ -12,6 +12,8 @@
  */
 package com.snowplowanalytics.rdbloader
 
+import java.io.File
+
 import cats.syntax.either._
 
 import io.circe.{ Decoder, Json => Yaml, Error }
@@ -44,9 +46,24 @@ object Config {
     * @param configYml content of `config.yaml`
     * @return either failure with human-readable error or success with `Config`
     */
-  def parse(configYml: String): Either[String, Config] = {
+  def parse(configYml: String): Either[ConfigError, Config] = {
     val yaml: Either[Error, Yaml] = parser.parse(configYml)
-    yaml.flatMap(_.as[Config]).leftMap(_.toString)  // TODO: make human-readable
+    yaml.flatMap(_.as[Config]).leftMap(e => DecodingError(e.toString))
+  }
+
+  /**
+    * Parse YAML file as `Config` object
+    *
+    * @param file java object pointing to `config.yaml`
+    * @return either failure with human-readable error or success with `Config`
+    */
+  def loadFromFile(file: File): Either[ConfigError, Config] = {
+    if (!file.isFile) ParseError(s"[${file.getAbsolutePath}] is not a file").asLeft
+    else if (!file.canRead) ParseError(s"Config [${file.getAbsolutePath} is not readable").asLeft
+    else {
+      val content = Utils.readFile(file)
+      content.flatMap(parse)
+    }
   }
 
   // aws section

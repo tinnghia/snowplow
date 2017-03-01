@@ -1,14 +1,32 @@
 package com.snowplowanalytics.rdbloader
 
+// circe
 import io.circe.{ParsingFailure, DecodingFailure}
 
+// JSON Schema validator
 import com.github.fge.jsonschema.core.report.ProcessingMessage
 
 
-sealed trait ConfigError
-case class ParseError(error: Option[ParsingFailure], message: Option[String]) extends ConfigError
-case class DecodingError(decodingFailure: Option[DecodingFailure], message: Option[String]) extends ConfigError
-case class ValidationError(processingMessages: ProcessingMessage) extends ConfigError
+sealed trait ConfigError { def message: String }
+
+case class ParseError(error: Option[ParsingFailure], textMessage: Option[String]) extends ConfigError {
+  def message: String = (error, textMessage) match {
+    case (_, Some(e)) => e
+    case (Some(e), _) => s"Configuration parse error: ${e.toString}"
+    case _ => "Unknown configuration parse error"
+  }
+}
+case class DecodingError(decodingFailure: Option[DecodingFailure], textMessage: Option[String]) extends ConfigError {
+  def message: String = (decodingFailure, textMessage) match {
+    case (_, Some(e)) => e
+    case (Some(e), _) => s"Configuration decode error: ${e.toString}"
+    case _ => "Unknown configuration parse error"
+  }
+}
+
+case class ValidationError(processingMessages: ProcessingMessage) extends ConfigError {
+  def message: String = processingMessages.toString
+}
 
 object ParseError {
   def apply(message: String): ParseError =
@@ -16,8 +34,6 @@ object ParseError {
 
   def apply(error: ParsingFailure): ParseError =
     ParseError(Some(error), None)
-
-
 }
 
 object DecodingError {

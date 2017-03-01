@@ -15,6 +15,10 @@ package com.snowplowanalytics.rdbloader
 // Java
 import java.io.File
 
+// json4s
+import org.json4s.JValue
+import org.json4s.jackson.{parseJson => parseJson4s}
+
 // Scala
 import scala.io.Source
 import scala.reflect.runtime.universe._
@@ -26,7 +30,7 @@ import cats.data.ValidatedNel
 import cats.syntax.either._
 
 // Circe
-import io.circe.{ HCursor, DecodingFailure, Json, Decoder }
+import io.circe.{ HCursor, DecodingFailure, Json, Decoder, ParsingFailure }
 
 object Utils {
 
@@ -89,6 +93,18 @@ object Utils {
       case NonFatal(_) => ParseError(s"File [${file.getAbsolutePath}] cannot be parsed").asLeft
     }
 
+  /**
+    * Helper method to parse Json4s JSON AST without exceptions
+    *
+    * @param json string presumably containing valid JSON
+    * @return json4s JValue AST if success
+    */
+  def safeParse(json: String): Either[ConfigError, JValue] =
+    try {
+      parseJson4s(json).asRight
+    } catch {
+      case NonFatal(e) => ParseError(ParsingFailure("Invalid JSON", e)).asLeft
+    }
 
   /**
    * Parse element of `StringEnum` sealed hierarchy from circe AST

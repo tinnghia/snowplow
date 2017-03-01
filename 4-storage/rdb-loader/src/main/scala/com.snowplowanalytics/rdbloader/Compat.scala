@@ -12,10 +12,12 @@
  */
 package com.snowplowanalytics.rdbloader
 
-import com.github.fge.jsonschema.core.report.ProcessingMessage
-
+//
 import scala.language.implicitConversions
-import scalaz.ValidationNel
+
+//
+import com.snowplowanalytics.iglu.client.Resolver
+import com.github.fge.jsonschema.core.report.ProcessingMessage
 
 // Circe
 import io.circe.Json
@@ -24,10 +26,12 @@ import io.circe.Json
 import cats.data.{ NonEmptyList => NonEmptyListCats, Validated, ValidatedNel }
 
 // Scalaz
-import scalaz.{ Validation, Success, Failure, NonEmptyList => NonEmptyListZ }
+import scalaz.{ NonEmptyList => NonEmptyListZ, Validation, ValidationNel, Success, Failure }
 
 // Json4s
 import org.json4s.JsonAST._
+
+import Utils._
 
 object Compat {
 
@@ -42,9 +46,13 @@ object Compat {
   implicit def validMes(v: ProcessingMessage): ConfigError =
     ValidationError(v)
 
-  implicit def validatedNel[L, R](z: ValidationNel[L, R]): cats.data.ValidatedNel[L, R] =
+  implicit def validatedNel[L, R](z: ValidationNel[L, R]): ValidatedNel[L, R] =
     z.fold((l: NonEmptyListZ[L]) => Validated.Invalid(l), r => Validated.Valid(r))
 
+  def convertIgluResolver(json: JValue): ValidatedNel[ConfigError, Resolver] = {
+    val resolver: ValidatedNel[ProcessingMessage, Resolver] = Resolver.parse(json)
+    resolver.leftMapNel(ValidationError.apply)
+  }
 
   implicit def jvalueToCirce(jValue: JValue): Json = jValue match {
     case JString(s)    => Json.fromString(s)

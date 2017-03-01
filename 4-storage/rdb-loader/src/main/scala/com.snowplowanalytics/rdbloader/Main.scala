@@ -13,23 +13,23 @@
 
 package com.snowplowanalytics.rdbloader
 
-import scala.collection.immutable.SortedSet
-
+// File
 import java.io.File
 
-import org.json4s.JValue
-
-import cats.data.{ Validated, ValidatedNel }
-import cats.instances.list._
-import cats.data.Validated._
-import cats.syntax.traverse._
+// cats
+import cats.syntax.cartesian._
+import cats.data.{ ValidatedNel, NonEmptyList }
 import cats.syntax.validated._
 import cats.syntax.either._
 
+// Iglu
 import com.snowplowanalytics.iglu.client.Resolver
 
+// This project
+import Compat._
+import Utils._
 import generated.ProjectMetadata
-import Utils.StringEnum
+import Targets.StorageTarget
 
 object Main extends App {
 
@@ -62,52 +62,37 @@ object Main extends App {
     skip: Seq[SkippableStep],
     b64config: Boolean)
 
+  private val rawCliConfig = CliConfig(new File("config.yml"), new File("targets"), new File("resolver.json"), Nil, Nil, true)
+
   case class AppConfig(
     configYaml: Config,
     b64config: Boolean,
     targets: Set[Targets.StorageTarget],
-    include: SortedSet[OptionalWorkStep],
-    skip: SortedSet[SkippableStep]) // Contains parsed configs
+    include: List[OptionalWorkStep],
+    skip: List[SkippableStep]) // Contains parsed configs
 
-  def loadResolver(resolverConfig: File): Validated[ConfigError, Resolver] = {
-    if (!resolverConfig.isFile) ParseError(s"[${resolverConfig.getAbsolutePath}] is not a file").invalid
-    else if (!resolverConfig.canRead) ParseError(s"Resolver config [${resolverConfig.getAbsolutePath} is not readable").invalid
+  def loadResolver(resolverConfig: File): ValidatedNel[ConfigError, Resolver] = {
+    if (!resolverConfig.isFile) ParseError(s"[${resolverConfig.getAbsolutePath}] is not a file").invalidNel
+    else if (!resolverConfig.canRead) ParseError(s"Resolver config [${resolverConfig.getAbsolutePath} is not readable").invalidNel
     else {
-      import Compat._
-      val json = readFile(resolverConfig).flatMap(Targets.safeParse).toValidatedNel
-
-      def myParse(json: JValue): ValidatedNel[ConfigError, Resolver] =  // This should be ValidatedNel[ConfigError, _]
-        Resolver.parse(json).fold(
-          messages => Invalid(nel(messages.map(m => ValidationError(m)))),
-          resolver => Valid(resolver)
-        )
-
-      val resolverZ: ValidatedNel[ConfigError, Resolver] =
-        json.andThen(myParse)
-
-
-      val f: ValidatedNel[String, Int] = ???
-
-      ???
+      val json = readFile(resolverConfig).flatMap(Utils.safeParse).toValidatedNel
+      json.andThen(convertIgluResolver)
     }
-
-    ???
   }
 
-  def transform(cliConfig: CliConfig): Either[String, AppConfig] = {
+  def transform(cliConfig: CliConfig): ValidatedNel[ConfigError, AppConfig] = {
     val resolver = loadResolver(cliConfig.resolver)
-    val targets = loadTargetsFromDir(cliConfig.targetsDir, ???)
+    val targets: ValidatedNel[ConfigError, List[StorageTarget]] = resolver.andThen { Targets.loadTargetsFromDir(cliConfig.targetsDir, _) }
+    val config: ValidatedNel[ConfigError, Config] = Config.loadFromFile(cliConfig.config).toValidatedNel
 
-    // validatednel config
-    // with
-    // validatednel resolver or targets
+    (targets |@| config).map {
+      case (t, c) => AppConfig(c, cliConfig.b64config, t.toSet, cliConfig.include.toList, cliConfig.skip.toList)
+    }
+  }
 
-//    for {
-//      config <- readFile(cliConfig.config)
-//
-//    } ???
-//    ???
-    "".asLeft
+  def getErrorMessage(errors: NonEmptyList[ConfigError]): String = {
+    s"""Following ${errors.toList.length} encountered:
+       |${errors.map(_.message.padTo(3, ' ')).toList.mkString("\n")}""".stripMargin
   }
 
   val parser = new scopt.OptionParser[CliConfig]("scopt") {
@@ -120,6 +105,10 @@ object Main extends App {
     opt[File]('t', "targets").required().valueName("<dir>").
       action((x, c) => c.copy(targetsDir = x)).
       text("directory with storage targets configuration JSONs")
+
+    opt[File]('r', "resolver").required().valueName("<dir>").
+      action((x, c) => c.copy(resolver = x)).
+      text("Self-describing JSON for Iglu resolver")
 
     opt[Unit]('b', "base64-config-string").action((_, c) ⇒
       c.copy(b64config = true)).text("base64-encoded configuration string")
@@ -134,5 +123,10 @@ object Main extends App {
 
   }
 
-  println("Hello Relational Database Loader!")
+  val value = parser.parse(args, rawCliConfig) match {
+    case Some(config) => transform(config).leftMap(getErrorMessage)
+    case None => throw new RuntimeException("FOO")
+  }
+
+  println(value)
 }

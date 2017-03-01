@@ -2,18 +2,17 @@ package com.snowplowanalytics.rdbloader
 
 import java.io.File
 
-import scala.util.control.NonFatal
-
 import cats.data.ValidatedNel
+import cats.syntax.traverse._
+import cats.instances.list._
 import cats.syntax.either._
 import cats.syntax.validated._
 
-import io.circe.{Json, ParsingFailure}
+import io.circe.Json
 import io.circe.Decoder._
 import io.circe.generic.auto._
 
 import org.json4s.JValue
-import org.json4s.jackson.{parseJson => parseJson4s}
 
 import com.github.fge.jsonschema.core.report.ProcessingMessage
 
@@ -47,63 +46,6 @@ object Targets {
   sealed trait StorageTarget extends Product with Serializable {
     def name: String
     def purpose: Purpose
-  }
-
-  def safeParse(target: String): Either[ConfigError, JValue] =
-    try {
-      parseJson4s(target).asRight
-    } catch {
-      case NonFatal(e) => ParseError(ParsingFailure("Invalid storage target JSON", e)).asLeft
-    }
-
-
-  def loadFromFile(resolver: Resolver)(file: File): ValidatedNel[ConfigError, StorageTarget] = {
-    val content = readFile(file).toValidatedNel
-    content.andThen(parseTarget(resolver))
-  }
-
-
-  def validate(resolver: Resolver)(json: JValue): ValidatedNel[ConfigError, Json] = {
-    val result: ValidatedNel[ProcessingMessage, JValue] = json.validate(dataOnly = false)(resolver)
-    result.map(Compat.jvalueToCirce).leftMapNel(ValidationError)  // Convert from Iglu client's format, TODO compat
-  }
-
-
-  def loadTargetsFromDir(directory: File, resolver: Resolver): ValidatedNel[ConfigError, List[Targets.StorageTarget]] = {
-    if (!directory.isDirectory) ParseError(s"[${directory.getAbsolutePath}] is not a directory").invalidNel
-    else if (!directory.canRead) ParseError(s"Targets directory [${directory.getAbsolutePath} is not readable").invalidNel
-    else {
-      val fileList = directory.listFiles.toList
-      val targetsList = fileList.map(Targets.loadFromFile(resolver))
-      targetsList.sequenceU
-    }
-  }
-
-
-  def parseTarget(resolver: Resolver)(target: String): ValidatedNel[ConfigError, StorageTarget] = {
-    val json = safeParse(target).toValidatedNel
-    val validatedJson = json.andThen(validate(resolver))
-    validatedJson.andThen(decodeStorageTarget(_).toValidatedNel)
-  }
-
-
-  def decodeStorageTarget(validJson: Json): Either[DecodingError, StorageTarget] = {
-    val nameDataPair = for {
-      jsonObject <- validJson.asObject
-      schema <- jsonObject.toMap.get("schema")
-      data <- jsonObject.toMap.get("data")
-      schemaKey <- schema.asString
-      key <- SchemaKey.fromUri(schemaKey)
-    } yield (key.name, data)
-
-    nameDataPair match {
-      case Some(("elastic_config", data)) => data.as[ElasticConfig].leftMap(DecodingError.apply)
-      case Some(("amazon_dynamodb_config", data)) => data.as[AmazonDynamodbConfig].leftMap(DecodingError.apply)
-      case Some(("postgresql_config", data)) => data.as[PostgresqlConfig].leftMap(DecodingError.apply)
-      case Some(("redshift_config", data)) => data.as[RedshiftConfig].leftMap(DecodingError.apply)
-      case Some((name, _)) => DecodingError(s"Unknown storage target [$name]").asLeft
-      case None => DecodingError("Not a self-describing JSON was used as storage target configuration").asLeft
-    }
   }
 
   case class ElasticConfig(
@@ -153,5 +95,91 @@ object Targets {
       compRows: Long)
     extends StorageTarget {
     val purpose = EnrichedEvents
+  }
+
+  /**
+    * Read all JSONs in directory, validate via Iglu as available storage targets
+    * and extract case classes.
+    *
+    * @param directory file object pointing to directory with configuration JSONs
+    * @param resolver Iglu resolver object
+    * @return list of validated storage targets OR
+    *         non-empty list of errors if any error occurred during processing of any file
+    */
+  def loadTargetsFromDir(directory: File, resolver: Resolver): ValidatedNel[ConfigError, List[Targets.StorageTarget]] = {
+    if (!directory.isDirectory) ParseError(s"[${directory.getAbsolutePath}] is not a directory").invalidNel
+    else if (!directory.canRead) ParseError(s"Targets directory [${directory.getAbsolutePath} is not readable").invalidNel
+    else {
+      val fileList = directory.listFiles.toList
+      val targetsList = fileList.map(Targets.loadFromFile(resolver))
+      targetsList.sequenceU
+    }
+  }
+
+  /**
+    * Decode Json as one of known storage targets
+    *
+    * @param validJson JSON that is presumably self-describing storage target configuration
+    * @return validated entity of `StorageTarget` ADT if success
+    */
+  def decodeStorageTarget(validJson: Json): Either[DecodingError, StorageTarget] = {
+    val nameDataPair = for {
+      jsonObject <- validJson.asObject
+      schema     <- jsonObject.toMap.get("schema")
+      data       <- jsonObject.toMap.get("data")
+      schemaKey  <- schema.asString
+      key        <- SchemaKey.fromUri(schemaKey)
+    } yield (key.name, data)
+
+    nameDataPair match {
+      case Some(("elastic_config", data)) => data.as[ElasticConfig].leftMap(DecodingError.apply)
+      case Some(("amazon_dynamodb_config", data)) => data.as[AmazonDynamodbConfig].leftMap(DecodingError.apply)
+      case Some(("postgresql_config", data)) => data.as[PostgresqlConfig].leftMap(DecodingError.apply)
+      case Some(("redshift_config", data)) => data.as[RedshiftConfig].leftMap(DecodingError.apply)
+      case Some((name, _)) => DecodingError(s"Unknown storage target [$name]").asLeft
+      case None => DecodingError("Not a self-describing JSON was used as storage target configuration").asLeft
+    }
+  }
+
+  import cats.data._
+
+
+  /**
+    * Parse string as `StorageTarget` validating it via Iglu resolver
+    *
+    * @param resolver Iglu resolver
+    * @param target string presumably containing self-describing JSON with storage target
+    * @return valid `StorageTarget` OR
+    *         non-empty list of errors (such as validation or parse errors)
+    */
+  def parseTarget(resolver: Resolver)(target: String): ValidatedNel[ConfigError, StorageTarget] = {
+    val json = safeParse(target).toValidatedNel
+    val validatedJson = json.andThen(validate(resolver))
+    validatedJson.andThen(decodeStorageTarget(_).toValidatedNel)
+  }
+
+  /**
+    * Load some `StorageTarget` from JSON file
+    *
+    * @param resolver Iglu resolver object
+    * @param file java file object with presumably JSON
+    * @return
+    */
+  private def loadFromFile(resolver: Resolver)(file: File): ValidatedNel[ConfigError, StorageTarget] = {
+    val parseAndValidate = parseTarget(resolver)(_)
+    val content = readFile(file).toValidatedNel
+    content.andThen(parseAndValidate)
+  }
+
+  /**
+    * Validate json4s JValue AST with Iglu Resolver and immediately convert it into circe AST
+    *
+    * @param resolver Iglu Resolver object
+    * @param json json4s AST
+    * @return circe AST
+    */
+  private def validate(resolver: Resolver)(json: JValue): ValidatedNel[ConfigError, Json] = {
+    val result: ValidatedNel[ProcessingMessage, JValue] = json.validate(dataOnly = false)(resolver)
+    result.map(Compat.jvalueToCirce).leftMapNel(ValidationError)  // Convert from Iglu client's format, TODO compat
   }
 }

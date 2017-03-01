@@ -62,6 +62,9 @@ module Snowplow
       NO_DATA_FAILURE_INDICATOR = /check-data-to-process/
       DIR_NOT_EMPTY_FAILURE_INDICATOR = /check-dir-empty/
       STANDARD_HOSTED_ASSETS = "s3://snowplow-hosted-assets"
+      ENRICH_STEP_INPUT = 'hdfs:///local/snowplow/raw-events/'
+      ENRICH_STEP_OUTPUT = 'hdfs:///local/snowplow/enriched-events/'
+      SHRED_STEP_OUTPUT = 'hdfs:///local/snowplow/shredded-events/'
 
       # Need to understand the status of all our jobflow steps
       @@running_states = Set.new(%w(WAITING RUNNING PENDING SHUTTING_DOWN))
@@ -262,12 +265,10 @@ module Snowplow
         else
           csbe[:good] # Doesn't make sense to partition if enrich has already been done
         end
-        enrich_step_output = "hdfs:///local/snowplow/enriched-events/"
 
         if enrich
 
           raw_input = csbr[:processing]
-          enrich_step_input = "hdfs:///local/snowplow/raw-events/"
 
           # for ndjson/urbanairship we can group by everything, just aim for the target size
           group_by = is_ua_ndjson(collector_format) ? ".*\/(\w+)\/.*" : ".*([0-9]+-[0-9]+-[0-9]+)-[0-9]+.*"
@@ -276,7 +277,7 @@ module Snowplow
           compact_to_hdfs_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
           compact_to_hdfs_step.arguments = [
             "--src"         , raw_input,
-            "--dest"        , enrich_step_input,
+            "--dest"        , ENRICH_STEP_INPUT,
             "--s3Endpoint"  , s3_endpoint
           ] + [
             "--groupBy"     , group_by,
@@ -291,14 +292,12 @@ module Snowplow
           @jobflow.add_step(compact_to_hdfs_step)
 
           # 2. Enrichment
-          enrich_step_output = "hdfs:///local/snowplow/enriched-events/"
-
           enrich_step = build_scalding_step(
             "Enrich Raw Events",
             assets[:enrich],
             "enrich.hadoop.EtlJob",
-            { :in     => glob_path(enrich_step_input),
-              :good   => enrich_step_output,
+            { :in     => glob_path(ENRICH_STEP_INPUT),
+              :good   => ENRICH_STEP_OUTPUT,
               :bad    => partition_by_run(csbe[:bad],    run_id),
               :errors => partition_by_run(csbe[:errors], run_id, config[:enrich][:continue_on_unexpected_error])
             },
@@ -316,7 +315,7 @@ module Snowplow
           # We need to copy our enriched events from HDFS back to S3
           copy_to_s3_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
           copy_to_s3_step.arguments = [
-            "--src"        , enrich_step_output,
+            "--src"        , ENRICH_STEP_OUTPUT,
             "--dest"       , enrich_final_output,
             "--srcPattern" , PARTFILE_REGEXP,
             "--s3Endpoint" , s3_endpoint
@@ -326,7 +325,7 @@ module Snowplow
 
           copy_success_file_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
           copy_success_file_step.arguments = [
-            "--src"        , enrich_step_output,
+            "--src"        , ENRICH_STEP_OUTPUT,
             "--dest"       , enrich_final_output,
             "--srcPattern" , ".*_SUCCESS",
             "--s3Endpoint" , s3_endpoint
@@ -339,14 +338,16 @@ module Snowplow
 
           # 3. Shredding
           shred_final_output = partition_by_run(csbs[:good], run_id)
-          shred_step_output = "hdfs:///local/snowplow/shredded-events/"
 
-          # If we didn't enrich already, we need to copy to HDFS
-          if !enrich
+          # If we enriched, we free some space on HDFS by deleting the raw events
+          # otherwise we need to copy the enriched events back to HDFS
+          if enrich
+            @jobflow.add_step(get_rmr_step(ENRICH_STEP_INPUT, standard_assets_bucket))
+          else
             copy_to_hdfs_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
             copy_to_hdfs_step.arguments = [
               "--src"        , enrich_final_output, # Opposite way round to normal
-              "--dest"       , enrich_step_output,
+              "--dest"       , ENRICH_STEP_OUTPUT,
               "--srcPattern" , PARTFILE_REGEXP,
               "--s3Endpoint" , s3_endpoint
             ] # Either user doesn't want compression, or files are already compressed
@@ -358,8 +359,8 @@ module Snowplow
             "Shred Enriched Events",
             assets[:shred],
             "enrich.hadoop.ShredJob",
-            { :in          => glob_path(enrich_step_output),
-              :good        => shred_step_output,
+            { :in          => glob_path(ENRICH_STEP_OUTPUT),
+              :good        => SHRED_STEP_OUTPUT,
               :bad         => partition_by_run(csbs[:bad], run_id),
               :errors      => partition_by_run(csbs[:errors], run_id, config[:enrich][:continue_on_unexpected_error])
             },
@@ -375,7 +376,7 @@ module Snowplow
           # We need to copy our shredded types from HDFS back to S3
           copy_to_s3_step = Elasticity::S3DistCpStep.new(legacy = @legacy)
           copy_to_s3_step.arguments = [
-            "--src"        , shred_step_output,
+            "--src"        , SHRED_STEP_OUTPUT,
             "--dest"       , shred_final_output,
             "--srcPattern" , PARTFILE_REGEXP,
             "--s3Endpoint" , s3_endpoint
@@ -685,6 +686,14 @@ module Snowplow
         jobflow.cluster_step_status.select { |s|
           s.state == 'FAILED' && s.args.any? { |a| a =~ DIR_NOT_EMPTY_FAILURE_INDICATOR }
         }.map { |s| s.args[1] }
+      end
+
+      Contract String, String => Elasticity::ScriptStep
+      def get_rmr_step(location, bucket)
+        script = "#{bucket}common/emr/snowplow-hadoop-fs-rmr.sh"
+        step = Elasticity::ScriptStep.new(@jobflow.region, script, location)
+        step.name << ": Recursively removing content from #{location}"
+        step
       end
 
       # Builds a script step checking that there is data in the processing bucket

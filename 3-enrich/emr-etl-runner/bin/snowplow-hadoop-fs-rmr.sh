@@ -15,12 +15,5 @@
 # Copyright:: Copyright (c) 2012-2017 Snowplow Analytics Ltd
 # License::   Apache License Version 2.0
 
-# Checks that a S3 folder is empty
-CNT=$(aws s3 ls $1 | wc -l)
-if [ "$CNT" -eq 0 ]; then
-  echo "$1 is empty"
-  exit 0
-else
-  echo "$1 is not empty" 1>&2
-  exit 1
-fi
+# Removes recursively a folder on HDFS
+hadoop fs -rm -r $1

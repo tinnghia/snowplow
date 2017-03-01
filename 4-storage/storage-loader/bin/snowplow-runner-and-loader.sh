@@ -20,7 +20,7 @@ RUNNER_ENRICHMENTS=/path/to/your/enrichment-jsons
 LOADER_CONFIG=/path/to/your-loader-config.yml
 
 # Run the ETL job on EMR
-./${RUNNER_PATH} --config ${RUNNER_CONFIG} --resolver ${RESOLVER} --enrichments ${RUNNER_ENRICHMENTS}
+./${RUNNER_PATH} run --config ${RUNNER_CONFIG} --resolver ${RESOLVER} --enrichments ${RUNNER_ENRICHMENTS}
 
 # Check the damage
 ret_val=$?

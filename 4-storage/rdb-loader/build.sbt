@@ -36,6 +36,8 @@ lazy val root = project.in(file("."))
       Dependencies.circeGeneric,
       Dependencies.circeGenericExtra,
 
+      Dependencies.postgres,
+
       Dependencies.specs2,
       Dependencies.scalazSpecs2,
       Dependencies.scalaCheck

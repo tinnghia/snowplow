@@ -36,7 +36,12 @@ object BuildSettings {
       "-Xlint",
       "-Yinline-warnings",
 //      "-Ywarn-dead-code",
-      "-Xfuture")
+      "-Xfuture"),
+
+    scalacOptions in (Compile, console) := Seq(
+      "-deprecation",
+      "-encoding", "UTF-8"
+    )
   )
 
   /**

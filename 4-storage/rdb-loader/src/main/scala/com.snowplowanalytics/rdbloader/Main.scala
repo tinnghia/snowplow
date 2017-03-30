@@ -10,11 +10,12 @@
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the Apache License Version 2.0 for the specific language governing permissions and limitations there under.
  */
-
 package com.snowplowanalytics.rdbloader
 
 // File
 import java.io.File
+
+import com.snowplowanalytics.rdbloader.Targets.{PostgresqlConfig, RedshiftConfig}
 
 // cats
 import cats.syntax.cartesian._
@@ -31,7 +32,7 @@ import Utils._
 import generated.ProjectMetadata
 import Targets.StorageTarget
 
-object Main extends App {
+object Main {
 
   import scopt.Read
 
@@ -53,7 +54,7 @@ object Main extends App {
   case object Shred extends SkippableStep { def asString = "shred" }
   case object Load extends SkippableStep { def asString = "load" }
 
-  // TODO: this probably should not contain `File`s
+  // TODO: this probably should contain base64-encoded strings instead of `File`
   case class CliConfig(
     config: File,
     targetsDir: File,
@@ -66,7 +67,7 @@ object Main extends App {
 
   case class AppConfig(
     configYaml: Config,
-    b64config: Boolean,
+    b64config: Boolean,     // TODO: Why is it in AppConfig
     targets: Set[Targets.StorageTarget],
     include: List[OptionalWorkStep],
     skip: List[SkippableStep]) // Contains parsed configs
@@ -123,10 +124,28 @@ object Main extends App {
 
   }
 
-  val value = parser.parse(args, rawCliConfig) match {
-    case Some(config) => transform(config).leftMap(getErrorMessage)
-    case None => throw new RuntimeException("FOO")
+  def processTargets(config: AppConfig, target: StorageTarget) = target match {
+    case postgresqlTarget: PostgresqlConfig =>
+      val downloadFolder = config.configYaml.storage.download.folder.getOrElse("") // TODO: get default dir
+      val monitoring = config.configYaml.monitoring.snowplow == null               // TODO: handle monitoring
+      loaders.PostgresqlLoader.loadEvents(downloadFolder, postgresqlTarget, config.include.toSet, config.skip.toSet, monitoring)
+    case redshiftTarget: RedshiftConfig =>
+      ???
+    case _ =>
+      ??? // Is not supported by RDB Loader
   }
 
-  println(value)
+  def run(config: AppConfig) = {
+    config.targets
+
+  }
+
+  def main(argv: Array[String]): Unit = {
+    val value = parser.parse(argv, rawCliConfig) match {
+      case Some(config) => transform(config).leftMap(getErrorMessage)
+      case None => sys.exit(1)
+    }
+
+    println(value)
+  }
 }

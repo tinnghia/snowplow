@@ -24,6 +24,10 @@ object Dependencies {
     val circeYaml        = "0.4.0"
     val circe            = "0.7.0"
     val cats             = "0.9.0"
+
+    // Java
+    val postgres         = "42.0.0"
+
     // Scala (test only)
     val specs2           = "2.3.13"
     val scalazSpecs2     = "0.2"
@@ -41,6 +45,11 @@ object Dependencies {
   val circeYaml         = "io.circe"                   %% "circe-yaml"                % V.circeYaml
   val circeGeneric      = "io.circe"                   %% "circe-generic"             % V.circe
   val circeGenericExtra = "io.circe"                   %% "circe-generic-extras"      % V.circe
+
+  // Java
+  val postgres          = "org.postgresql"             % "postgresql"                 % V.postgres
+  val amazon            = "com.amazonaws"
+
   // Scala (test only)
   val specs2            = "org.specs2"                 %% "specs2"                    % V.specs2         % "test"
   val scalazSpecs2      = "org.typelevel"              %% "scalaz-specs2"             % V.scalazSpecs2   % "test"

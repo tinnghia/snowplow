@@ -36,17 +36,15 @@ import Main.{Analyze, OptionalWorkStep, SkippableStep, Vacuum}
 object PostgresqlLoader {
 
   val EventFiles = "part-*"
-  val EscapeChar = "\\x02"
-  val QuoteChar = "\\x01"
-  val EventFieldSeparator = "	"
+  val EventFieldSeparator = "\t"
   val NullString = ""
+  val QuoteChar = "\\x01"
+  val EscapeChar = "\\x02"
 
   case class PostgresLoadError(file: Path, exception: Exception)
   case class PostgresQueryError(query: String, exception: Exception)
 
-  def getTable(schema: String): String = {
-    schema + ".events"
-  }
+  def getTable(schema: String): String = schema + ".events"
 
   /**
     *

@@ -37,11 +37,16 @@ object Utils {
   private val m = ru.runtimeMirror(getClass.getClassLoader)
 
   /**
-   * Common trait for all ADTs that have single-possible string representations
+   * Common trait for all ADTs that can be read from string
    * Must be extended by sealed hierarchy including only singletons
    * Used by `decodeStringEnum` to get runtime representation of whole ADT
    */
   trait StringEnum {
+    /**
+      * **IN** string representation.
+      * It should be used only to help read `StringEnum` from string
+      * and never other way round, such as render value into SQL statement
+      */
     def asString: String
   }
 

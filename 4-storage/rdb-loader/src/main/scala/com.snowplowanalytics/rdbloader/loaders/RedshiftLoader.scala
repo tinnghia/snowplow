@@ -14,14 +14,32 @@ package com.snowplowanalytics.rdbloader
 package loaders
 
 import Targets.RedshiftConfig
+import Config.SnowplowAws
 
 object RedshiftLoader {
 
+  val EventFiles = "part-*"
+  val EventFieldSeparator = "\t"
+  val NullString = ""
+  val QuoteChar = "\\x01"
+  val EscapeChar = "\\x02"
+
+
   def loadEventsAndShreddedTypes(target: RedshiftConfig): Unit = {
-
-
-
     ???
   }
+
+  def getShreddedStatements(): Unit = ???
+
+  def getManifestStatements(): Unit = ???
+
+  def buildCopyFromTsvStatement(): Unit = {
+    val creds = getCredentials()
+    val steps
+  }
+
+  def getCredentials(aws: SnowplowAws): String =
+    s"aws_access_key_id=${aws.accessKeyId};aws_secret_access_key=${aws.secretAccessKey}"
+
 
 }

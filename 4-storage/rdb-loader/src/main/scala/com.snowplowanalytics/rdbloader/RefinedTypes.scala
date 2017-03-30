@@ -31,10 +31,14 @@ object RefinedTypes {
   type S3Bucket = String @@ S3BucketTag
 
   object S3Bucket extends tag.Tagger[S3BucketTag] {
+    def appendTrailingSlash(s: String): String =
+      if (s.endsWith("/")) s
+      else s + "/"
+
     def parse(s: String): Either[String, S3Bucket] = s match {
       case _ if !s.startsWith("s3://") => "Bucket name must start with s3://".asLeft
       case _ if s.length > 1024        => "Key length cannot be more than 1024 symbols".asLeft
-      case _                           => apply(s).asRight
+      case _                           => apply(appendTrailingSlash(s)).asRight
     }
   }
 

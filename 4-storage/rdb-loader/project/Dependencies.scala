@@ -27,6 +27,7 @@ object Dependencies {
 
     // Java
     val postgres         = "42.0.0"
+    val aws              = "1.11.105"
 
     // Scala (test only)
     val specs2           = "2.3.13"
@@ -35,23 +36,23 @@ object Dependencies {
   }
 
   // Scala
-  val scopt             = "com.github.scopt"           %% "scopt"                     % V.scopt
-  val scalaz7           = "org.scalaz"                 %% "scalaz-core"               % V.scalaz7
-  val json4s            = "org.json4s"                 %% "json4s-jackson"            % V.json4s
-  val igluClient        = "com.snowplowanalytics"      %% "iglu-scala-client"         % V.igluClient
-  val igluCore          = "com.snowplowanalytics"      %% "iglu-core"                 % V.igluCore      intransitive()
-  val cats              = "org.typelevel"              %% "cats"                      % V.cats
-  val circeCore         = "io.circe"                   %% "circe-core"                % V.circe
-  val circeYaml         = "io.circe"                   %% "circe-yaml"                % V.circeYaml
-  val circeGeneric      = "io.circe"                   %% "circe-generic"             % V.circe
-  val circeGenericExtra = "io.circe"                   %% "circe-generic-extras"      % V.circe
+  val scopt             = "com.github.scopt"           %% "scopt"                % V.scopt
+  val scalaz7           = "org.scalaz"                 %% "scalaz-core"          % V.scalaz7
+  val json4s            = "org.json4s"                 %% "json4s-jackson"       % V.json4s
+  val igluClient        = "com.snowplowanalytics"      %% "iglu-scala-client"    % V.igluClient
+  val igluCore          = "com.snowplowanalytics"      %% "iglu-core"            % V.igluCore     intransitive()
+  val cats              = "org.typelevel"              %% "cats"                 % V.cats
+  val circeCore         = "io.circe"                   %% "circe-core"           % V.circe
+  val circeYaml         = "io.circe"                   %% "circe-yaml"           % V.circeYaml
+  val circeGeneric      = "io.circe"                   %% "circe-generic"        % V.circe
+  val circeGenericExtra = "io.circe"                   %% "circe-generic-extras" % V.circe
 
   // Java
-  val postgres          = "org.postgresql"             % "postgresql"                 % V.postgres
-  val amazon            = "com.amazonaws"
+  val postgres          = "org.postgresql"             % "postgresql"            % V.postgres
+  val s3                = "com.amazonaws"              % "aws-java-sdk-s3"       % V.aws
 
   // Scala (test only)
-  val specs2            = "org.specs2"                 %% "specs2"                    % V.specs2         % "test"
-  val scalazSpecs2      = "org.typelevel"              %% "scalaz-specs2"             % V.scalazSpecs2   % "test"
-  val scalaCheck        = "org.scalacheck"             %% "scalacheck"                % V.scalaCheck     % "test"
+  val specs2            = "org.specs2"                 %% "specs2"               % V.specs2       % "test"
+  val scalazSpecs2      = "org.typelevel"              %% "scalaz-specs2"        % V.scalazSpecs2 % "test"
+  val scalaCheck        = "org.scalacheck"             %% "scalacheck"           % V.scalaCheck   % "test"
 }

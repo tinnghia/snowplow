@@ -4,9 +4,9 @@ import loaders.PostgresqlLoader.PostgresLoadError
 
 object Monitoring {
   def trackLoadSucceeded(): Unit = {
-    println("Successfuly loaded")
+    println("Successfully loaded")
   }
   def trackLoadFailed(error: PostgresLoadError): Unit = {
-    println("Errot during load")
+    println("Error during load")
   }
 }

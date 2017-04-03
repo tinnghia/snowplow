@@ -13,8 +13,11 @@
 package com.snowplowanalytics.rdbloader
 package loaders
 
+import com.amazonaws.auth.{AWSStaticCredentialsProvider, BasicAWSCredentials}
+import com.amazonaws.services.s3.{AmazonS3, AmazonS3ClientBuilder}
 import Targets.RedshiftConfig
-import Config.SnowplowAws
+import Config.{GzipCompression, NoneCompression, OutputCompression, SnowplowAws}
+import Main.{Compupdate, OptionalWorkStep, Shred, SkippableStep}
 
 object RedshiftLoader {
 
@@ -24,18 +27,48 @@ object RedshiftLoader {
   val QuoteChar = "\\x01"
   val EscapeChar = "\\x02"
 
+  case class SqlStatement(copy: String, analyze: String, vacuum: String)
 
-  def loadEventsAndShreddedTypes(target: RedshiftConfig): Unit = {
-    ???
+  def loadEventsAndShreddedTypes(config: Config, target: RedshiftConfig, skippableSteps: Set[SkippableStep]): Unit = {
+    val awsCredentials = new BasicAWSCredentials(config.aws.accessKeyId, config.aws.secretAccessKey)
+
+    val s3 = AmazonS3ClientBuilder
+      .standard()
+      .withRegion(config.aws.s3.region)
+      .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
+      .build()
+
+    val shreddedStatements = getShreddedStatements(config, target, skippableSteps, s3)
   }
 
-  def getShreddedStatements(): Unit = ???
+  def getShreddedStatements(config: Config, targets: RedshiftConfig, skippableSteps: Set[SkippableStep], s3: AmazonS3): List[SqlStatement] = {
+    if (skippableSteps.contains(Shred)) {
+      Nil
+    } else {
+
+    }
+  }
 
   def getManifestStatements(): Unit = ???
 
-  def buildCopyFromTsvStatement(): Unit = {
-    val creds = getCredentials()
-    val steps
+  def buildCopyFromTsvStatement(config: Config, target: RedshiftConfig, include: Set[OptionalWorkStep]): String = {
+    val credentials = getCredentials(config.aws)
+    val compressionFormat = getCompressionFormat(config.enrich.outputCompression)
+    val tableName = Common.getTable(target.schema)
+    val comprows = if (include.contains(Compupdate)) s"COMPUPDATE COMPROWS ${target.compRows}" else ""
+
+    // TODO: config.enrich is incorrect!
+    s"""COPY $tableName FROM '${config.enrich}'
+       | CREDENTIALS '$credentials' REGION AS '${config.aws.s3.region}'
+       | DELIMITER '$EventFieldSeparator' MAXERROR ${target.maxError}
+       | EMPTYASNULL FILLRECORD TRUNCATECOLUMNS $comprows
+       | TIMEFORMAT 'auto' ACCEPTINVCHARS $compressionFormat;"""
+      .stripMargin
+  }
+
+  def getCompressionFormat(outputCodec: OutputCompression): String = outputCodec match {
+    case NoneCompression => ""
+    case GzipCompression => "GZIP"
   }
 
   def getCredentials(aws: SnowplowAws): String =
